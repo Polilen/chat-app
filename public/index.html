@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Чат</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+  <!-- Екран автентифікації -->
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-logo">речі<span>.</span></div>
+      <p class="auth-tagline">Пишіть один одному за юзернеймом</p>
+
+      <div class="auth-tabs">
+        <button class="auth-tab active" data-tab="login">Увійти</button>
+        <button class="auth-tab" data-tab="register">Реєстрація</button>
+      </div>
+
+      <form id="loginForm" class="auth-form">
+        <input type="text" id="loginUsername" placeholder="юзернейм" autocomplete="username" required>
+        <input type="password" id="loginPassword" placeholder="пароль" autocomplete="current-password" required>
+        <button type="submit">Увійти</button>
+      </form>
+
+      <form id="registerForm" class="auth-form hidden">
+        <input type="text" id="registerUsername" placeholder="юзернейм (лат., цифри, _)" autocomplete="username" required>
+        <input type="password" id="registerPassword" placeholder="пароль (мін. 6 символів)" autocomplete="new-password" required>
+        <button type="submit">Створити акаунт</button>
+      </form>
+
+      <p id="authError" class="auth-error hidden"></p>
+    </div>
+  </div>
+
+  <!-- Основний застосунок -->
+  <div id="appScreen" class="app-screen hidden">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="me">
+          <span class="me-username" id="meUsername"></span>
+        </div>
+        <button id="logoutBtn" class="icon-btn" title="Вийти">⏻</button>
+      </div>
+
+      <div class="search-box">
+        <input type="text" id="searchInput" placeholder="Знайти за юзернеймом…">
+        <div id="searchResults" class="search-results hidden"></div>
+      </div>
+
+      <div id="chatList" class="chat-list"></div>
+    </aside>
+
+    <main class="chat-panel">
+      <div id="emptyState" class="empty-state">
+        <div class="empty-glyph">✦</div>
+        <p>Оберіть чат або знайдіть людину за юзернеймом,<br>щоб почати переписку</p>
+      </div>
+
+      <div id="activeChat" class="active-chat hidden">
+        <header class="chat-header">
+          <span id="chatWithUsername"></span>
+        </header>
+        <div id="messages" class="messages"></div>
+        <form id="messageForm" class="message-form">
+          <input type="text" id="messageInput" placeholder="Повідомлення…" autocomplete="off" required>
+          <button type="submit">➤</button>
+        </form>
+      </div>
+    </main>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

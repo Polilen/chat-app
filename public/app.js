@@ -292,7 +292,7 @@
 
     let inner = '';
     if (imageUrl) {
-      inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото" onclick="window.open('${escapeAttr(imageUrl)}','_blank')">`;
+      inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото">`;
     }
     if (msg.text) {
       inner += `<span class="msg-text">${escapeHtml(msg.text)}</span>`;
@@ -300,8 +300,88 @@
     inner += `<span class="msg-time">${time}</span>`;
 
     div.innerHTML = inner;
+    if (imageUrl) {
+      div.querySelector('.msg-image').addEventListener('click', () => openImageModal(imageUrl));
+    }
     messagesEl.appendChild(div);
   }
+
+  // ---------- Модалка перегляду фото ---------- 
+
+  const imageModal = el('imageModal');
+  const imageModalImg = el('imageModalImg');
+  const imageModalDownload = el('imageModalDownload');
+  const imageModalForward = el('imageModalForward');
+  let previewImageUrl = null;
+
+  function openImageModal(url) {
+    previewImageUrl = url;
+    imageModalImg.src = url;
+    const filename = url.split('/').pop();
+    imageModalDownload.href = url;
+    imageModalDownload.setAttribute('download', filename);
+    imageModal.classList.remove('hidden');
+  }
+
+  function closeImageModal() {
+    imageModal.classList.add('hidden');
+    imageModalImg.src = '';
+  }
+
+  imageModalForward.addEventListener('click', () => openForwardModal());
+
+  // ---------- Модалка пересилання ---------- 
+
+  const forwardModal = el('forwardModal');
+  const forwardChatList = el('forwardChatList');
+  const forwardStatus = el('forwardStatus');
+
+  function openForwardModal() {
+    forwardStatus.classList.add('hidden');
+    forwardChatList.innerHTML = '';
+    if (!state.chats.length) {
+      forwardChatList.innerHTML = '<div class="forward-status" style="border:none">Немає чатів для пересилання</div>';
+    }
+    state.chats.forEach((chat) => {
+      const item = document.createElement('div');
+      item.className = 'forward-chat-item';
+      item.textContent = chat.withUser.username;
+      item.addEventListener('click', () => forwardImageTo(chat.chatId, chat.withUser.username));
+      forwardChatList.appendChild(item);
+    });
+    forwardModal.classList.remove('hidden');
+  }
+
+  function closeForwardModal() {
+    forwardModal.classList.add('hidden');
+  }
+
+  function forwardImageTo(chatId, username) {
+    if (!previewImageUrl) return;
+    state.socket.emit('message:send', { chatId, text: '', imageUrl: previewImageUrl }, (ack) => {
+      if (ack && ack.error) {
+        forwardStatus.textContent = 'Помилка: ' + ack.error;
+        forwardStatus.classList.remove('hidden');
+        return;
+      }
+      forwardStatus.textContent = `Переслано до @${username}`;
+      forwardStatus.classList.remove('hidden');
+      loadChats();
+      setTimeout(() => {
+        closeForwardModal();
+        closeImageModal();
+      }, 700);
+    });
+  }
+
+  document.querySelectorAll('[data-close="image"]').forEach((btn) => btn.addEventListener('click', closeImageModal));
+  document.querySelectorAll('[data-close="forward"]').forEach((btn) => btn.addEventListener('click', closeForwardModal));
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!forwardModal.classList.contains('hidden')) closeForwardModal();
+    else if (!imageModal.classList.contains('hidden')) closeImageModal();
+  });
 
   function scrollMessagesToBottom() {
     messagesEl.scrollTop = messagesEl.scrollHeight;

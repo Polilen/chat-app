@@ -78,6 +78,32 @@
     </main>
   </div>
 
+  <!-- Перегляд фото на весь екран -->
+  <div id="imageModal" class="image-modal hidden">
+    <div class="modal-backdrop" data-close="image"></div>
+    <div class="image-modal-content">
+      <button id="imageModalClose" class="modal-close-btn" data-close="image">✕</button>
+      <img id="imageModalImg" src="" alt="Перегляд фото">
+      <div class="image-modal-actions">
+        <button id="imageModalForward" class="modal-action-btn">↪ Переслати</button>
+        <a id="imageModalDownload" class="modal-action-btn" download>⬇ Завантажити</a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Вибір чату для пересилання -->
+  <div id="forwardModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="forward"></div>
+    <div class="forward-modal-content">
+      <div class="forward-modal-header">
+        <span>Переслати до…</span>
+        <button id="forwardModalClose" class="icon-btn" data-close="forward">✕</button>
+      </div>
+      <div id="forwardChatList" class="forward-chat-list"></div>
+      <p id="forwardStatus" class="forward-status hidden"></p>
+    </div>
+  </div>
+
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>
 </body>

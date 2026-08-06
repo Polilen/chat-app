@@ -77,9 +77,15 @@
           <img id="imagePreviewImg" alt="Прев'ю">
           <button type="button" id="cancelImageBtn" class="cancel-image-btn">✕</button>
         </div>
+        <div id="audioPreview" class="audio-preview hidden">
+          <span id="audioPreviewName" class="audio-preview-name"></span>
+          <button type="button" id="cancelAudioBtn" class="cancel-image-btn">✕</button>
+        </div>
         <form id="messageForm" class="message-form">
           <input type="file" id="imageInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+          <input type="file" id="audioInput" accept="audio/mpeg,audio/mp3,audio/wav,audio/ogg,audio/webm,audio/mp4,audio/m4a,audio/aac" class="hidden">
           <button type="button" id="attachBtn" class="attach-btn" title="Додати фото">📎</button>
+          <button type="button" id="attachAudioBtn" class="attach-btn" title="Додати аудіо">🎵</button>
           <input type="text" id="messageInput" placeholder="Повідомлення…" autocomplete="off">
           <button type="submit">➤</button>
         </form>

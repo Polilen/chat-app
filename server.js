@@ -26,9 +26,13 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/uploads', express.static(UPLOAD_DIR));
 
-// ---------- Завантаження картинок ----------
+// ---------- Завантаження файлів (картинки + аудіо) ----------
 
-const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const ALLOWED_AUDIO_MIME = new Set([
+  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg',
+  'audio/webm', 'audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/aac',
+]);
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -38,10 +42,10 @@ const upload = multer({
       cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
     },
   }),
-  limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB (з запасом для аудіо)
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED_MIME.has(file.mimetype)) {
-      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp)'));
+    if (!ALLOWED_IMAGE_MIME.has(file.mimetype) && !ALLOWED_AUDIO_MIME.has(file.mimetype)) {
+      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp) або аудіо (mp3, wav, ogg, m4a, aac)'));
     }
     cb(null, true);
   },
@@ -121,10 +125,11 @@ app.get('/api/me', authMiddleware, (req, res) => {
 });
 
 app.post('/api/upload', authMiddleware, (req, res) => {
-  upload.single('image')(req, res, (err) => {
+  upload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
-    res.json({ url: `/uploads/${req.file.filename}` });
+    const type = ALLOWED_AUDIO_MIME.has(req.file.mimetype) ? 'audio' : 'image';
+    res.json({ url: `/uploads/${req.file.filename}`, type });
   });
 });
 
@@ -159,7 +164,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username FROM users WHERE id = ?').get(row.otherId);
     const lastMsg = db.prepare(
-      'SELECT text, image_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
+      'SELECT text, image_url, audio_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
     return {
       chatId: row.chatId,
@@ -182,7 +187,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
   const messages = db.prepare(
-    'SELECT id, sender_id as senderId, text, image_url as imageUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
+    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
   ).all(chatId);
   res.json({ messages });
 });
@@ -206,10 +211,11 @@ io.on('connection', (socket) => {
 
   socket.on('message:send', (payload, ack) => {
     try {
-      const { chatId, text, imageUrl } = payload || {};
+      const { chatId, text, imageUrl, audioUrl } = payload || {};
       const cleanText = String(text || '').trim();
       const cleanImageUrl = imageUrl && imageUrl.startsWith('/uploads/') ? imageUrl : null;
-      if (!chatId || (!cleanText && !cleanImageUrl)) {
+      const cleanAudioUrl = audioUrl && audioUrl.startsWith('/uploads/') ? audioUrl : null;
+      if (!chatId || (!cleanText && !cleanImageUrl && !cleanAudioUrl)) {
         if (ack) ack({ error: 'Порожнє повідомлення' });
         return;
       }
@@ -219,10 +225,10 @@ io.on('connection', (socket) => {
         return;
       }
       const info = db.prepare(
-        'INSERT INTO messages (chat_id, sender_id, text, image_url) VALUES (?, ?, ?, ?)'
-      ).run(chatId, socket.user.id, cleanText, cleanImageUrl);
+        'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url) VALUES (?, ?, ?, ?, ?)'
+      ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const otherId = otherUserId(chat, socket.user.id);

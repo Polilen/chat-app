@@ -150,7 +150,11 @@
       let previewText = 'Немає повідомлень';
       if (chat.lastMessage) {
         const prefix = chat.lastMessage.sender_id === state.user.id ? 'Ви: ' : '';
-        previewText = prefix + (chat.lastMessage.image_url ? '📷 Фото' : chat.lastMessage.text);
+        let contentPreview;
+        if (chat.lastMessage.image_url) contentPreview = '📷 Фото';
+        else if (chat.lastMessage.audio_url) contentPreview = '🎵 Аудіо';
+        else contentPreview = chat.lastMessage.text;
+        previewText = prefix + contentPreview;
       }
       const preview = previewText;
       item.innerHTML = `
@@ -246,6 +250,9 @@
       imageInput.value = '';
       return;
     }
+    pendingAudioFile = null;
+    audioInput.value = '';
+    audioPreview.classList.add('hidden');
     pendingImageFile = file;
     imagePreviewImg.src = URL.createObjectURL(file);
     imagePreview.classList.remove('hidden');
@@ -257,18 +264,50 @@
     imagePreview.classList.add('hidden');
   });
 
-  async function uploadPendingImage() {
-    if (!pendingImageFile) return null;
+  // ---------- Прикріплення аудіо ----------
+
+  const attachAudioBtn = el('attachAudioBtn');
+  const audioInput = el('audioInput');
+  const audioPreview = el('audioPreview');
+  const audioPreviewName = el('audioPreviewName');
+  const cancelAudioBtn = el('cancelAudioBtn');
+  let pendingAudioFile = null;
+
+  attachAudioBtn.addEventListener('click', () => audioInput.click());
+
+  audioInput.addEventListener('change', () => {
+    const file = audioInput.files[0];
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      alert('Файл занадто великий (максимум 20 МБ)');
+      audioInput.value = '';
+      return;
+    }
+    pendingImageFile = null;
+    imageInput.value = '';
+    imagePreview.classList.add('hidden');
+    pendingAudioFile = file;
+    audioPreviewName.textContent = '🎵 ' + file.name;
+    audioPreview.classList.remove('hidden');
+  });
+
+  cancelAudioBtn.addEventListener('click', () => {
+    pendingAudioFile = null;
+    audioInput.value = '';
+    audioPreview.classList.add('hidden');
+  });
+
+  async function uploadFile(file) {
     const formData = new FormData();
-    formData.append('image', pendingImageFile);
+    formData.append('file', file);
     const res = await fetch('/api/upload', {
       method: 'POST',
       headers: { Authorization: 'Bearer ' + state.token },
       body: formData,
     });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Не вдалося завантажити фото');
-    return data.url;
+    if (!res.ok) throw new Error(data.error || 'Не вдалося завантажити файл');
+    return data;
   }
 
   async function openChat(chatId, withUser) {
@@ -289,6 +328,7 @@
         senderId: m.senderId,
         text: m.text,
         imageUrl: m.imageUrl,
+        audioUrl: m.audioUrl,
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
@@ -309,11 +349,15 @@
     }
     const time = formatTime(msg.createdAt || msg.created_at);
     const imageUrl = msg.imageUrl || msg.image_url;
+    const audioUrl = msg.audioUrl || msg.audio_url;
     const text = msg.text || '';
 
     let inner = '<div class="msg-checkbox"></div>';
     if (imageUrl) {
       inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото">`;
+    }
+    if (audioUrl) {
+      inner += '<div class="msg-audio-slot"></div>';
     }
     if (text) {
       inner += `<span class="msg-text">${escapeHtml(text)}</span>`;
@@ -329,6 +373,12 @@
         e.stopPropagation();
         openImageModal(imageUrl);
       });
+      div.dataset.imageUrl = imageUrl;
+    }
+
+    if (audioUrl) {
+      div.querySelector('.msg-audio-slot').replaceWith(buildAudioPlayer(audioUrl));
+      div.dataset.audioUrl = audioUrl;
     }
 
     const actions = div.querySelector('.msg-actions');
@@ -339,7 +389,7 @@
     forwardIcon.textContent = '↪';
     forwardIcon.addEventListener('click', (e) => {
       e.stopPropagation();
-      openForwardModal([{ text, imageUrl: imageUrl || null }]);
+      openForwardModal([{ text, imageUrl: imageUrl || null, audioUrl: audioUrl || null }]);
     });
     actions.appendChild(forwardIcon);
 
@@ -362,6 +412,110 @@
     });
 
     messagesEl.appendChild(div);
+  }
+
+  // ---------- Кастомний аудіоплеєр з повзунком гучності ----------
+
+  function buildAudioPlayer(url) {
+    const wrap = document.createElement('div');
+    wrap.className = 'msg-audio';
+
+    const audio = new Audio(url);
+    audio.preload = 'metadata';
+    audio.volume = Number(localStorage.getItem('audioVolume') || '1');
+
+    const playBtn = document.createElement('button');
+    playBtn.type = 'button';
+    playBtn.className = 'audio-play-btn';
+    playBtn.textContent = '▶';
+
+    const controls = document.createElement('div');
+    controls.className = 'msg-audio-controls';
+
+    const seek = document.createElement('input');
+    seek.type = 'range';
+    seek.className = 'audio-seek';
+    seek.min = '0';
+    seek.max = '100';
+    seek.value = '0';
+
+    const timeRow = document.createElement('div');
+    timeRow.className = 'audio-time-row';
+    const curTimeEl = document.createElement('span');
+    curTimeEl.textContent = '0:00';
+    const durTimeEl = document.createElement('span');
+    durTimeEl.textContent = '0:00';
+    timeRow.append(curTimeEl, durTimeEl);
+
+    const volRow = document.createElement('div');
+    volRow.className = 'audio-volume-row';
+    const volIcon = document.createElement('span');
+    volIcon.className = 'audio-vol-icon';
+    volIcon.textContent = '🔊';
+    const volSlider = document.createElement('input');
+    volSlider.type = 'range';
+    volSlider.className = 'audio-volume';
+    volSlider.min = '0';
+    volSlider.max = '100';
+    volSlider.value = String(Math.round(audio.volume * 100));
+    volRow.append(volIcon, volSlider);
+
+    controls.append(seek, timeRow, volRow);
+    wrap.append(playBtn, controls);
+
+    let seeking = false;
+
+    playBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (state.selectionMode) return;
+      if (audio.paused) {
+        document.querySelectorAll('audio').forEach((a) => { if (a !== audio) a.pause(); });
+        audio.play();
+      } else {
+        audio.pause();
+      }
+    });
+
+    audio.addEventListener('play', () => { playBtn.textContent = '⏸'; });
+    audio.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+    audio.addEventListener('ended', () => { playBtn.textContent = '▶'; seek.value = '0'; });
+
+    audio.addEventListener('loadedmetadata', () => {
+      durTimeEl.textContent = formatDuration(audio.duration);
+    });
+
+    audio.addEventListener('timeupdate', () => {
+      if (seeking || !audio.duration) return;
+      seek.value = String((audio.currentTime / audio.duration) * 100);
+      curTimeEl.textContent = formatDuration(audio.currentTime);
+    });
+
+    seek.addEventListener('input', () => { seeking = true; });
+    seek.addEventListener('change', () => {
+      if (audio.duration) {
+        audio.currentTime = (Number(seek.value) / 100) * audio.duration;
+      }
+      seeking = false;
+    });
+    seek.addEventListener('click', (e) => e.stopPropagation());
+
+    volSlider.addEventListener('input', (e) => {
+      e.stopPropagation();
+      const v = Number(volSlider.value) / 100;
+      audio.volume = v;
+      localStorage.setItem('audioVolume', String(v));
+      volIcon.textContent = v === 0 ? '🔇' : v < 0.5 ? '🔉' : '🔊';
+    });
+    volSlider.addEventListener('click', (e) => e.stopPropagation());
+
+    return wrap;
+  }
+
+  function formatDuration(sec) {
+    if (!isFinite(sec) || sec < 0) return '0:00';
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60).toString().padStart(2, '0');
+    return `${m}:${s}`;
   }
 
   // ---------- Виділення повідомлень ----------
@@ -428,7 +582,8 @@
       .sort((a, b) => Number(a.dataset.id) - Number(b.dataset.id))
       .map((node) => ({
         text: node.querySelector('.msg-text')?.textContent || '',
-        imageUrl: node.querySelector('.msg-image')?.getAttribute('src') || null,
+        imageUrl: node.dataset.imageUrl || null,
+        audioUrl: node.dataset.audioUrl || null,
       }));
     openForwardModal(items);
   });
@@ -487,7 +642,7 @@
   let pendingForwardItems = [];
 
   function openForwardModal(items) {
-    pendingForwardItems = items.filter((it) => it.text || it.imageUrl);
+    pendingForwardItems = items.filter((it) => it.text || it.imageUrl || it.audioUrl);
     if (!pendingForwardItems.length) return;
     forwardStatus.classList.add('hidden');
     forwardChatList.innerHTML = '';
@@ -514,7 +669,7 @@
     let remaining = pendingForwardItems.length;
     let hadError = false;
     pendingForwardItems.forEach((item) => {
-      state.socket.emit('message:send', { chatId, text: item.text || '', imageUrl: item.imageUrl || null }, (ack) => {
+      state.socket.emit('message:send', { chatId, text: item.text || '', imageUrl: item.imageUrl || null, audioUrl: item.audioUrl || null }, (ack) => {
         remaining -= 1;
         if (ack && ack.error) hadError = true;
         if (remaining === 0) {
@@ -551,22 +706,31 @@
     e.preventDefault();
     const input = el('messageInput');
     const text = input.value.trim();
-    if ((!text && !pendingImageFile) || !state.activeChatId) return;
+    if ((!text && !pendingImageFile && !pendingAudioFile) || !state.activeChatId) return;
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {
       let imageUrl = null;
+      let audioUrl = null;
       if (pendingImageFile) {
-        imageUrl = await uploadPendingImage();
+        const uploaded = await uploadFile(pendingImageFile);
+        imageUrl = uploaded.url;
       }
-      state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl }, (ack) => {
+      if (pendingAudioFile) {
+        const uploaded = await uploadFile(pendingAudioFile);
+        audioUrl = uploaded.url;
+      }
+      state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl, audioUrl }, (ack) => {
         if (ack && ack.error) console.error(ack.error);
       });
       input.value = '';
       pendingImageFile = null;
       imageInput.value = '';
       imagePreview.classList.add('hidden');
+      pendingAudioFile = null;
+      audioInput.value = '';
+      audioPreview.classList.add('hidden');
     } catch (err) {
       alert(err.message);
     } finally {

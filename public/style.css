@@ -430,13 +430,25 @@ body {
 }
 .msg.selected { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+.msg-time-row {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+  margin-top: 3px;
+}
+
 .msg-time {
-  display: block;
   font-size: 10.5px;
   color: var(--text-dim);
-  margin-top: 3px;
-  text-align: right;
 }
+
+.msg-status {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  letter-spacing: -1px;
+}
+.msg-status.read { color: var(--accent); }
 
 .message-form {
   display: flex;

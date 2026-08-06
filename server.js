@@ -111,6 +111,16 @@ function otherUserId(chat, myId) {
   return chat.user1_id === myId ? chat.user2_id : chat.user1_id;
 }
 
+function notifyChatPartnersAvatarChanged(userId, avatarUrl) {
+  const partners = db.prepare(`
+    SELECT DISTINCT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
+    FROM chats WHERE user1_id = ? OR user2_id = ?
+  `).all(userId, userId, userId);
+  partners.forEach((p) => {
+    io.to(`user:${p.otherId}`).emit('avatar:updated', { userId, avatarUrl });
+  });
+}
+
 // ---------- REST API ----------
 
 app.post('/api/register', (req, res) => {
@@ -168,6 +178,7 @@ app.post('/api/me/avatar', authMiddleware, (req, res) => {
       fs.unlink(oldPath, () => {});
     }
 
+    notifyChatPartnersAvatarChanged(req.user.id, avatarUrl);
     res.json({ avatarUrl });
   });
 });
@@ -179,6 +190,7 @@ app.delete('/api/me/avatar', authMiddleware, (req, res) => {
     const oldPath = path.join(UPLOAD_DIR, path.basename(old.avatar_url));
     fs.unlink(oldPath, () => {});
   }
+  notifyChatPartnersAvatarChanged(req.user.id, null);
   res.json({ ok: true });
 });
 
@@ -266,7 +278,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
   const messages = db.prepare(
-    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
+    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
   ).all(chatId);
   res.json({ messages });
 });
@@ -308,7 +320,7 @@ io.on('connection', (socket) => {
         'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url, video_url) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl, cleanVideoUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const otherId = otherUserId(chat, socket.user.id);
@@ -320,6 +332,39 @@ io.on('connection', (socket) => {
       io.to(`user:${otherId}`).emit('message:new', { ...message, withUser: senderInfo, from: senderInfo });
 
       if (ack) ack({ ok: true, message });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('messages:read', (payload, ack) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) {
+        if (ack) ack({ error: 'Не вказано чат' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+      const unread = db.prepare(
+        'SELECT id FROM messages WHERE chat_id = ? AND sender_id != ? AND read_at IS NULL'
+      ).all(chatId, socket.user.id);
+
+      if (unread.length) {
+        const ids = unread.map((m) => m.id);
+        const placeholders = ids.map(() => '?').join(',');
+        db.prepare(`UPDATE messages SET read_at = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
+        const readAt = db.prepare('SELECT read_at FROM messages WHERE id = ?').get(ids[0]).read_at;
+
+        const otherId = otherUserId(chat, socket.user.id);
+        io.to(`user:${otherId}`).emit('messages:read', { chatId, messageIds: ids, readAt });
+      }
+
+      if (ack) ack({ ok: true, count: unread.length });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

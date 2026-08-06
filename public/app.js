@@ -139,7 +139,21 @@
       if (state.activeChatId === msg.chatId) {
         appendMessage(msg);
         scrollMessagesToBottom();
+        // Чат відкритий прямо зараз — одразу позначаємо чуже повідомлення прочитаним
+        if (msg.senderId !== state.user.id) {
+          state.socket.emit('messages:read', { chatId: msg.chatId });
+        }
       }
+    });
+    state.socket.on('messages:read', ({ chatId, messageIds }) => {
+      if (state.activeChatId !== chatId) return;
+      messageIds.forEach((id) => {
+        const node = messagesEl.querySelector(`[data-id="${id}"] .msg-status`);
+        if (node) {
+          node.textContent = '✓✓';
+          node.classList.add('read');
+        }
+      });
     });
     state.socket.on('message:deleted', ({ chatId, messageIds }) => {
       if (state.activeChatId === chatId) {
@@ -151,6 +165,20 @@
         updateSelectionBar();
       }
       loadChats();
+    });
+    state.socket.on('avatar:updated', ({ userId, avatarUrl }) => {
+      let changed = false;
+      state.chats.forEach((chat) => {
+        if (chat.withUser.id === userId) {
+          chat.withUser.avatarUrl = avatarUrl;
+          changed = true;
+        }
+      });
+      if (changed) renderChatList();
+      if (state.activeChatWith && state.activeChatWith.id === userId) {
+        state.activeChatWith.avatarUrl = avatarUrl;
+        renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
+      }
     });
     state.socket.on('connect_error', (err) => {
       console.error('Помилка сокета:', err.message);
@@ -519,9 +547,11 @@
         imageUrl: m.imageUrl,
         audioUrl: m.audioUrl,
         videoUrl: m.videoUrl,
+        readAt: m.readAt,
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
+      state.socket.emit('messages:read', { chatId });
     } catch (err) {
       console.error(err);
     }
@@ -556,7 +586,13 @@
     if (text) {
       inner += `<span class="msg-text">${escapeHtml(text)}</span>`;
     }
+    inner += '<span class="msg-time-row">';
     inner += `<span class="msg-time">${time}</span>`;
+    if (mine) {
+      const isRead = !!(msg.readAt || msg.read_at);
+      inner += `<span class="msg-status${isRead ? ' read' : ''}">${isRead ? '✓✓' : '✓'}</span>`;
+    }
+    inner += '</span>';
     inner += '<div class="msg-actions"></div>';
 
     div.innerHTML = inner;

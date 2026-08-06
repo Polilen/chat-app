@@ -29,10 +29,18 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 // ---------- Завантаження файлів (картинки + аудіо) ----------
 
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024; // 8 MB
+const MAX_AUDIO_SIZE = 20 * 1024 * 1024; // 20 MB
+const MAX_VIDEO_SIZE = 500 * 1024 * 1024; // 500 MB
 
 function isAllowedAudioMime(mimetype) {
   const base = (mimetype || '').split(';')[0].trim().toLowerCase();
   return base.startsWith('audio/');
+}
+
+function isAllowedVideoMime(mimetype) {
+  const base = (mimetype || '').split(';')[0].trim().toLowerCase();
+  return base.startsWith('video/');
 }
 
 const upload = multer({
@@ -43,11 +51,11 @@ const upload = multer({
       cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
     },
   }),
-  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB (з запасом для аудіо)
+  limits: { fileSize: MAX_VIDEO_SIZE }, // спільний верхній ліміт, точні ліміти по типах — нижче
   fileFilter: (req, file, cb) => {
     const baseMime = (file.mimetype || '').split(';')[0].trim();
-    if (!ALLOWED_IMAGE_MIME.has(baseMime) && !isAllowedAudioMime(file.mimetype)) {
-      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp) або аудіо (mp3, wav, ogg, m4a, webm тощо)'));
+    if (!ALLOWED_IMAGE_MIME.has(baseMime) && !isAllowedAudioMime(file.mimetype) && !isAllowedVideoMime(file.mimetype)) {
+      return cb(new Error('Дозволені лише зображення, аудіо або відео файли'));
     }
     cb(null, true);
   },
@@ -176,9 +184,30 @@ app.delete('/api/me/avatar', authMiddleware, (req, res) => {
 
 app.post('/api/upload', authMiddleware, (req, res) => {
   upload.single('file')(req, res, (err) => {
-    if (err) return res.status(400).json({ error: err.message });
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'Файл занадто великий (максимум 500 МБ)' });
+      }
+      return res.status(400).json({ error: err.message });
+    }
     if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
-    const type = isAllowedAudioMime(req.file.mimetype) ? 'audio' : 'image';
+
+    let type = 'image';
+    let maxSize = MAX_IMAGE_SIZE;
+    if (isAllowedAudioMime(req.file.mimetype)) {
+      type = 'audio';
+      maxSize = MAX_AUDIO_SIZE;
+    } else if (isAllowedVideoMime(req.file.mimetype)) {
+      type = 'video';
+      maxSize = MAX_VIDEO_SIZE;
+    }
+
+    if (req.file.size > maxSize) {
+      fs.unlink(req.file.path, () => {});
+      const mb = Math.round(maxSize / (1024 * 1024));
+      return res.status(400).json({ error: `Файл занадто великий (максимум ${mb} МБ для цього типу)` });
+    }
+
     res.json({ url: `/uploads/${req.file.filename}`, type });
   });
 });
@@ -214,7 +243,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
     const lastMsg = db.prepare(
-      'SELECT text, image_url, audio_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
+      'SELECT text, image_url, audio_url, video_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
     return {
       chatId: row.chatId,
@@ -237,7 +266,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
   const messages = db.prepare(
-    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
+    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
   ).all(chatId);
   res.json({ messages });
 });
@@ -261,11 +290,12 @@ io.on('connection', (socket) => {
 
   socket.on('message:send', (payload, ack) => {
     try {
-      const { chatId, text, imageUrl, audioUrl } = payload || {};
+      const { chatId, text, imageUrl, audioUrl, videoUrl } = payload || {};
       const cleanText = String(text || '').trim();
       const cleanImageUrl = imageUrl && imageUrl.startsWith('/uploads/') ? imageUrl : null;
       const cleanAudioUrl = audioUrl && audioUrl.startsWith('/uploads/') ? audioUrl : null;
-      if (!chatId || (!cleanText && !cleanImageUrl && !cleanAudioUrl)) {
+      const cleanVideoUrl = videoUrl && videoUrl.startsWith('/uploads/') ? videoUrl : null;
+      if (!chatId || (!cleanText && !cleanImageUrl && !cleanAudioUrl && !cleanVideoUrl)) {
         if (ack) ack({ error: 'Порожнє повідомлення' });
         return;
       }
@@ -275,10 +305,10 @@ io.on('connection', (socket) => {
         return;
       }
       const info = db.prepare(
-        'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url) VALUES (?, ?, ?, ?, ?)'
-      ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl);
+        'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url, video_url) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl, cleanVideoUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const otherId = otherUserId(chat, socket.user.id);

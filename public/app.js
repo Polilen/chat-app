@@ -180,6 +180,7 @@
         const prefix = chat.lastMessage.sender_id === state.user.id ? 'Ви: ' : '';
         let contentPreview;
         if (chat.lastMessage.image_url) contentPreview = '📷 Фото';
+        else if (chat.lastMessage.video_url) contentPreview = '🎬 Відео';
         else if (chat.lastMessage.audio_url) contentPreview = '🎵 Аудіо';
         else contentPreview = chat.lastMessage.text;
         previewText = prefix + contentPreview;
@@ -285,6 +286,9 @@
     pendingAudioFile = null;
     audioInput.value = '';
     audioPreview.classList.add('hidden');
+    pendingVideoFile = null;
+    videoInput.value = '';
+    videoPreview.classList.add('hidden');
     pendingImageFile = file;
     imagePreviewImg.src = URL.createObjectURL(file);
     imagePreview.classList.remove('hidden');
@@ -318,6 +322,9 @@
     pendingImageFile = null;
     imageInput.value = '';
     imagePreview.classList.add('hidden');
+    pendingVideoFile = null;
+    videoInput.value = '';
+    videoPreview.classList.add('hidden');
     pendingAudioFile = file;
     audioPreviewName.textContent = '🎵 ' + file.name;
     audioPreview.classList.remove('hidden');
@@ -327,6 +334,45 @@
     pendingAudioFile = null;
     audioInput.value = '';
     audioPreview.classList.add('hidden');
+  });
+
+  // ---------- Прикріплення відео ----------
+
+  const attachVideoBtn = el('attachVideoBtn');
+  const videoInput = el('videoInput');
+  const videoPreview = el('videoPreview');
+  const videoPreviewEl = el('videoPreviewEl');
+  const cancelVideoBtn = el('cancelVideoBtn');
+  const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
+  let pendingVideoFile = null;
+
+  attachVideoBtn.addEventListener('click', () => videoInput.click());
+
+  videoInput.addEventListener('change', () => {
+    const file = videoInput.files[0];
+    if (!file) return;
+    if (file.size > MAX_VIDEO_BYTES) {
+      alert('Файл занадто великий (максимум 500 МБ)');
+      videoInput.value = '';
+      return;
+    }
+    pendingImageFile = null;
+    imageInput.value = '';
+    imagePreview.classList.add('hidden');
+    pendingAudioFile = null;
+    audioInput.value = '';
+    audioPreview.classList.add('hidden');
+    pendingVideoFile = file;
+    videoPreviewEl.src = URL.createObjectURL(file);
+    videoPreview.classList.remove('hidden');
+  });
+
+  cancelVideoBtn.addEventListener('click', () => {
+    pendingVideoFile = null;
+    videoInput.value = '';
+    videoPreviewEl.pause();
+    videoPreviewEl.removeAttribute('src');
+    videoPreview.classList.add('hidden');
   });
 
   async function uploadFile(file) {
@@ -387,6 +433,9 @@
     pendingAudioFile = null;
     audioInput.value = '';
     audioPreview.classList.add('hidden');
+    pendingVideoFile = null;
+    videoInput.value = '';
+    videoPreview.classList.add('hidden');
 
     recordedChunks = [];
     recordingCancelled = false;
@@ -469,6 +518,7 @@
         text: m.text,
         imageUrl: m.imageUrl,
         audioUrl: m.audioUrl,
+        videoUrl: m.videoUrl,
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
@@ -490,11 +540,15 @@
     const time = formatTime(msg.createdAt || msg.created_at);
     const imageUrl = msg.imageUrl || msg.image_url;
     const audioUrl = msg.audioUrl || msg.audio_url;
+    const videoUrl = msg.videoUrl || msg.video_url;
     const text = msg.text || '';
 
     let inner = '<div class="msg-checkbox"></div>';
     if (imageUrl) {
       inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото">`;
+    }
+    if (videoUrl) {
+      inner += '<div class="msg-video-slot"></div>';
     }
     if (audioUrl) {
       inner += '<div class="msg-audio-slot"></div>';
@@ -511,9 +565,30 @@
       div.querySelector('.msg-image').addEventListener('click', (e) => {
         if (state.selectionMode) return;
         e.stopPropagation();
-        openImageModal(imageUrl);
+        openMediaModal(imageUrl, 'image');
       });
       div.dataset.imageUrl = imageUrl;
+    }
+
+    if (videoUrl) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg-video-wrap';
+      const videoEl = document.createElement('video');
+      videoEl.className = 'msg-video';
+      videoEl.src = videoUrl;
+      videoEl.muted = true;
+      videoEl.preload = 'metadata';
+      const playIcon = document.createElement('div');
+      playIcon.className = 'msg-video-play';
+      playIcon.textContent = '▶';
+      wrap.append(videoEl, playIcon);
+      wrap.addEventListener('click', (e) => {
+        if (state.selectionMode) return;
+        e.stopPropagation();
+        openMediaModal(videoUrl, 'video');
+      });
+      div.querySelector('.msg-video-slot').replaceWith(wrap);
+      div.dataset.videoUrl = videoUrl;
     }
 
     if (audioUrl) {
@@ -529,7 +604,7 @@
     forwardIcon.textContent = '↪';
     forwardIcon.addEventListener('click', (e) => {
       e.stopPropagation();
-      openForwardModal([{ text, imageUrl: imageUrl || null, audioUrl: audioUrl || null }]);
+      openForwardModal([{ text, imageUrl: imageUrl || null, audioUrl: audioUrl || null, videoUrl: videoUrl || null }]);
     });
     actions.appendChild(forwardIcon);
 
@@ -601,7 +676,16 @@
     volRow.append(volIcon, volSlider);
 
     controls.append(seek, timeRow, volRow);
-    wrap.append(playBtn, controls);
+
+    const downloadBtn = document.createElement('a');
+    downloadBtn.className = 'audio-download-btn';
+    downloadBtn.title = 'Завантажити';
+    downloadBtn.href = url;
+    downloadBtn.setAttribute('download', url.split('/').pop());
+    downloadBtn.textContent = '⬇';
+    downloadBtn.addEventListener('click', (e) => e.stopPropagation());
+
+    wrap.append(playBtn, controls, downloadBtn);
 
     let seeking = false;
 
@@ -724,6 +808,7 @@
         text: node.querySelector('.msg-text')?.textContent || '',
         imageUrl: node.dataset.imageUrl || null,
         audioUrl: node.dataset.audioUrl || null,
+        videoUrl: node.dataset.videoUrl || null,
       }));
     openForwardModal(items);
   });
@@ -750,17 +835,31 @@
     });
   }
 
-  // ---------- Модалка перегляду фото ---------- 
+  // ---------- Модалка перегляду фото/відео ----------
 
   const imageModal = el('imageModal');
   const imageModalImg = el('imageModalImg');
+  const imageModalVideo = el('imageModalVideo');
   const imageModalDownload = el('imageModalDownload');
   const imageModalForward = el('imageModalForward');
-  let previewImageUrl = null;
+  let previewMediaUrl = null;
+  let previewMediaType = 'image';
 
-  function openImageModal(url) {
-    previewImageUrl = url;
-    imageModalImg.src = url;
+  function openMediaModal(url, type) {
+    previewMediaUrl = url;
+    previewMediaType = type;
+    if (type === 'video') {
+      imageModalImg.classList.add('hidden');
+      imageModalImg.src = '';
+      imageModalVideo.classList.remove('hidden');
+      imageModalVideo.src = url;
+    } else {
+      imageModalVideo.classList.add('hidden');
+      imageModalVideo.pause();
+      imageModalVideo.removeAttribute('src');
+      imageModalImg.classList.remove('hidden');
+      imageModalImg.src = url;
+    }
     const filename = url.split('/').pop();
     imageModalDownload.href = url;
     imageModalDownload.setAttribute('download', filename);
@@ -770,9 +869,16 @@
   function closeImageModal() {
     imageModal.classList.add('hidden');
     imageModalImg.src = '';
+    imageModalVideo.pause();
+    imageModalVideo.removeAttribute('src');
   }
 
-  imageModalForward.addEventListener('click', () => openForwardModal([{ text: '', imageUrl: previewImageUrl }]));
+  imageModalForward.addEventListener('click', () => {
+    const item = { text: '', imageUrl: null, audioUrl: null, videoUrl: null };
+    if (previewMediaType === 'video') item.videoUrl = previewMediaUrl;
+    else item.imageUrl = previewMediaUrl;
+    openForwardModal([item]);
+  });
 
   // ---------- Модалка пересилання ----------
 
@@ -782,7 +888,7 @@
   let pendingForwardItems = [];
 
   function openForwardModal(items) {
-    pendingForwardItems = items.filter((it) => it.text || it.imageUrl || it.audioUrl);
+    pendingForwardItems = items.filter((it) => it.text || it.imageUrl || it.audioUrl || it.videoUrl);
     if (!pendingForwardItems.length) return;
     forwardStatus.classList.add('hidden');
     forwardChatList.innerHTML = '';
@@ -809,7 +915,7 @@
     let remaining = pendingForwardItems.length;
     let hadError = false;
     pendingForwardItems.forEach((item) => {
-      state.socket.emit('message:send', { chatId, text: item.text || '', imageUrl: item.imageUrl || null, audioUrl: item.audioUrl || null }, (ack) => {
+      state.socket.emit('message:send', { chatId, text: item.text || '', imageUrl: item.imageUrl || null, audioUrl: item.audioUrl || null, videoUrl: item.videoUrl || null }, (ack) => {
         remaining -= 1;
         if (ack && ack.error) hadError = true;
         if (remaining === 0) {
@@ -944,13 +1050,14 @@
     e.preventDefault();
     const input = el('messageInput');
     const text = input.value.trim();
-    if ((!text && !pendingImageFile && !pendingAudioFile) || !state.activeChatId) return;
+    if ((!text && !pendingImageFile && !pendingAudioFile && !pendingVideoFile) || !state.activeChatId) return;
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
     try {
       let imageUrl = null;
       let audioUrl = null;
+      let videoUrl = null;
       if (pendingImageFile) {
         const uploaded = await uploadFile(pendingImageFile);
         imageUrl = uploaded.url;
@@ -959,7 +1066,11 @@
         const uploaded = await uploadFile(pendingAudioFile);
         audioUrl = uploaded.url;
       }
-      state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl, audioUrl }, (ack) => {
+      if (pendingVideoFile) {
+        const uploaded = await uploadFile(pendingVideoFile);
+        videoUrl = uploaded.url;
+      }
+      state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl, audioUrl, videoUrl }, (ack) => {
         if (ack && ack.error) console.error(ack.error);
       });
       input.value = '';
@@ -969,6 +1080,11 @@
       pendingAudioFile = null;
       audioInput.value = '';
       audioPreview.classList.add('hidden');
+      pendingVideoFile = null;
+      videoInput.value = '';
+      videoPreviewEl.pause();
+      videoPreviewEl.removeAttribute('src');
+      videoPreview.classList.add('hidden');
     } catch (err) {
       alert(err.message);
     } finally {

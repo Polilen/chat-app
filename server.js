@@ -53,6 +53,24 @@ const upload = multer({
   },
 });
 
+const avatarUpload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || '';
+      cb(null, `avatar-${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB
+  fileFilter: (req, file, cb) => {
+    const baseMime = (file.mimetype || '').split(';')[0].trim();
+    if (!ALLOWED_IMAGE_MIME.has(baseMime)) {
+      return cb(new Error('Аватарка має бути зображенням (jpeg, png, gif, webp)'));
+    }
+    cb(null, true);
+  },
+});
+
 // ---------- Допоміжні функції ----------
 
 function createToken(user) {
@@ -105,7 +123,7 @@ app.post('/api/register', (req, res) => {
   }
   const hash = bcrypt.hashSync(password, 10);
   const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(cleanUsername, hash);
-  const user = { id: info.lastInsertRowid, username: cleanUsername };
+  const user = { id: info.lastInsertRowid, username: cleanUsername, avatarUrl: null };
   res.json({ token: createToken(user), user });
 });
 
@@ -119,11 +137,41 @@ app.post('/api/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Невірний юзернейм або пароль' });
   }
-  res.json({ token: createToken(user), user: { id: user.id, username: user.username } });
+  res.json({ token: createToken(user), user: { id: user.id, username: user.username, avatarUrl: user.avatar_url } });
 });
 
 app.get('/api/me', authMiddleware, (req, res) => {
-  res.json({ user: req.user });
+  const user = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
+  res.json({ user });
+});
+
+app.post('/api/me/avatar', authMiddleware, (req, res) => {
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
+
+    const old = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+    const avatarUrl = `/uploads/${req.file.filename}`;
+    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, req.user.id);
+
+    if (old && old.avatar_url) {
+      const oldPath = path.join(UPLOAD_DIR, path.basename(old.avatar_url));
+      fs.unlink(oldPath, () => {});
+    }
+
+    res.json({ avatarUrl });
+  });
+});
+
+app.delete('/api/me/avatar', authMiddleware, (req, res) => {
+  const old = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+  db.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').run(req.user.id);
+  if (old && old.avatar_url) {
+    const oldPath = path.join(UPLOAD_DIR, path.basename(old.avatar_url));
+    fs.unlink(oldPath, () => {});
+  }
+  res.json({ ok: true });
 });
 
 app.post('/api/upload', authMiddleware, (req, res) => {
@@ -139,7 +187,7 @@ app.get('/api/search', authMiddleware, (req, res) => {
   const q = String(req.query.username || '').trim().toLowerCase();
   if (!q) return res.json({ users: [] });
   const users = db.prepare(
-    'SELECT id, username FROM users WHERE username LIKE ? AND id != ? LIMIT 20'
+    'SELECT id, username, avatar_url as avatarUrl FROM users WHERE username LIKE ? AND id != ? LIMIT 20'
   ).all(`%${q}%`, req.user.id);
   res.json({ users });
 });
@@ -152,7 +200,7 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
   if (!target) return res.status(404).json({ error: 'Користувача не знайдено' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'Не можна писати самому собі' });
   const chat = getOrCreateChat(req.user.id, target.id);
-  res.json({ chat: { id: chat.id, withUser: { id: target.id, username: target.username } } });
+  res.json({ chat: { id: chat.id, withUser: { id: target.id, username: target.username, avatarUrl: target.avatar_url } } });
 });
 
 app.get('/api/chats', authMiddleware, (req, res) => {
@@ -164,7 +212,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   `).all(req.user.id, req.user.id, req.user.id);
 
   const result = chats.map(row => {
-    const other = db.prepare('SELECT id, username FROM users WHERE id = ?').get(row.otherId);
+    const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
     const lastMsg = db.prepare(
       'SELECT text, image_url, audio_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
@@ -234,7 +282,8 @@ io.on('connection', (socket) => {
       ).get(info.lastInsertRowid);
 
       const otherId = otherUserId(chat, socket.user.id);
-      const senderInfo = { id: socket.user.id, username: socket.user.username };
+      const senderRow = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(socket.user.id);
+      const senderInfo = senderRow || { id: socket.user.id, username: socket.user.username };
 
       // Надсилаємо обом учасникам: відправнику (інша вкладка/пристрій) та отримувачу
       io.to(`user:${socket.user.id}`).emit('message:new', { ...message, withUser: { id: otherId } , from: senderInfo});

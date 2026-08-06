@@ -13,6 +13,7 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
+    avatar_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -48,6 +49,12 @@ if (!messageColumns.includes('image_url')) {
 }
 if (!messageColumns.includes('audio_url')) {
   db.exec('ALTER TABLE messages ADD COLUMN audio_url TEXT');
+}
+
+// Міграція для баз, створених до появи аватарок
+const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
+if (!userColumns.includes('avatar_url')) {
+  db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
 }
 
 module.exports = db;

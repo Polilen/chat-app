@@ -39,7 +39,8 @@
   <div id="appScreen" class="app-screen hidden">
     <aside class="sidebar">
       <div class="sidebar-header">
-        <div class="me">
+        <div class="me" id="meProfileBtn" title="Налаштування профілю">
+          <div id="meAvatar" class="avatar-slot"></div>
           <span class="me-username" id="meUsername"></span>
         </div>
         <button id="logoutBtn" class="icon-btn" title="Вийти">⏻</button>
@@ -61,7 +62,10 @@
 
       <div id="activeChat" class="active-chat hidden">
         <header class="chat-header">
-          <span id="chatWithUsername"></span>
+          <div class="chat-header-info">
+            <div id="chatHeaderAvatar" class="avatar-slot"></div>
+            <span id="chatWithUsername"></span>
+          </div>
           <button id="selectModeBtn" class="icon-btn select-mode-btn" title="Виділити повідомлення">☑</button>
         </header>
         <div id="messages" class="messages"></div>
@@ -126,6 +130,27 @@
       </div>
       <div id="forwardChatList" class="forward-chat-list"></div>
       <p id="forwardStatus" class="forward-status hidden"></p>
+    </div>
+  </div>
+
+  <!-- Налаштування профілю -->
+  <div id="settingsModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="settings"></div>
+    <div class="forward-modal-content settings-modal-content">
+      <div class="forward-modal-header">
+        <span>Налаштування профілю</span>
+        <button id="settingsModalClose" class="icon-btn" data-close="settings">✕</button>
+      </div>
+      <div class="settings-body">
+        <div id="settingsAvatar" class="avatar-slot avatar-slot-large"></div>
+        <span id="settingsUsername" class="settings-username"></span>
+        <input type="file" id="avatarInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+        <div class="settings-actions">
+          <button type="button" id="changeAvatarBtn" class="modal-action-btn">🖼 Змінити аватарку</button>
+          <button type="button" id="removeAvatarBtn" class="modal-action-btn danger">Видалити аватарку</button>
+        </div>
+        <p id="settingsStatus" class="forward-status hidden" style="border:none"></p>
+      </div>
     </div>
   </div>
 

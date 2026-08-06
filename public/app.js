@@ -12,6 +12,33 @@
 
   const el = (id) => document.getElementById(id);
 
+  // ---------- Аватарки ----------
+
+  const AVATAR_COLORS = ['#e5697a', '#e0a83a', '#33d6b0', '#3aa0e0', '#8a6fe0', '#e05fb8', '#5fbf6b', '#e0863a'];
+
+  function colorForUsername(username) {
+    let hash = 0;
+    for (let i = 0; i < username.length; i++) hash = username.charCodeAt(i) + ((hash << 5) - hash);
+    return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+  }
+
+  function renderAvatarInto(container, username, avatarUrl) {
+    container.innerHTML = '';
+    if (avatarUrl) {
+      const img = document.createElement('img');
+      img.className = 'avatar';
+      img.src = avatarUrl;
+      img.alt = username || '';
+      container.appendChild(img);
+    } else {
+      const fallback = document.createElement('div');
+      fallback.className = 'avatar-fallback';
+      fallback.style.background = colorForUsername(username || '?');
+      fallback.textContent = (username || '?').charAt(0);
+      container.appendChild(fallback);
+    }
+  }
+
   // ---------- API helper ----------
 
   async function api(path, options = {}) {
@@ -98,6 +125,7 @@
     authScreen.classList.add('hidden');
     appScreen.classList.remove('hidden');
     el('meUsername').textContent = state.user.username;
+    renderAvatarInto(el('meAvatar'), state.user.username, state.user.avatarUrl);
     connectSocket();
     loadChats();
   }
@@ -158,9 +186,13 @@
       }
       const preview = previewText;
       item.innerHTML = `
-        <span class="chat-list-username">${escapeHtml(chat.withUser.username)}</span>
-        <span class="chat-list-preview">${escapeHtml(preview)}</span>
+        <div class="avatar-slot"></div>
+        <div class="chat-list-text">
+          <span class="chat-list-username">${escapeHtml(chat.withUser.username)}</span>
+          <span class="chat-list-preview">${escapeHtml(preview)}</span>
+        </div>
       `;
+      renderAvatarInto(item.querySelector('.avatar-slot'), chat.withUser.username, chat.withUser.avatarUrl);
       item.addEventListener('click', () => openChat(chat.chatId, chat.withUser));
       list.appendChild(item);
     });
@@ -424,6 +456,7 @@
     emptyState.classList.add('hidden');
     activeChatEl.classList.remove('hidden');
     el('chatWithUsername').textContent = withUser.username;
+    renderAvatarInto(el('chatHeaderAvatar'), withUser.username, withUser.avatarUrl);
     renderChatList();
 
     try {
@@ -798,11 +831,109 @@
 
   document.querySelectorAll('[data-close="image"]').forEach((btn) => btn.addEventListener('click', closeImageModal));
   document.querySelectorAll('[data-close="forward"]').forEach((btn) => btn.addEventListener('click', closeForwardModal));
+  document.querySelectorAll('[data-close="settings"]').forEach((btn) => btn.addEventListener('click', closeSettingsModal));
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!forwardModal.classList.contains('hidden')) closeForwardModal();
+    if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
+    else if (!forwardModal.classList.contains('hidden')) closeForwardModal();
     else if (!imageModal.classList.contains('hidden')) closeImageModal();
+  });
+
+  // ---------- Налаштування профілю (аватарка) ----------
+
+  const meProfileBtn = el('meProfileBtn');
+  const settingsModal = el('settingsModal');
+  const settingsAvatar = el('settingsAvatar');
+  const settingsUsername = el('settingsUsername');
+  const settingsStatus = el('settingsStatus');
+  const avatarInput = el('avatarInput');
+  const changeAvatarBtn = el('changeAvatarBtn');
+  const removeAvatarBtn = el('removeAvatarBtn');
+
+  function openSettingsModal() {
+    settingsStatus.classList.add('hidden');
+    settingsUsername.textContent = state.user.username;
+    renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
+    settingsModal.classList.remove('hidden');
+  }
+
+  function closeSettingsModal() {
+    settingsModal.classList.add('hidden');
+  }
+
+  function showSettingsStatus(msg) {
+    settingsStatus.textContent = msg;
+    settingsStatus.classList.remove('hidden');
+  }
+
+  function persistUser() {
+    localStorage.setItem('user', JSON.stringify(state.user));
+    renderAvatarInto(el('meAvatar'), state.user.username, state.user.avatarUrl);
+    renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
+    if (state.activeChatWith && state.activeChatWith.id === state.user.id) {
+      renderAvatarInto(el('chatHeaderAvatar'), state.user.username, state.user.avatarUrl);
+    }
+  }
+
+  meProfileBtn.addEventListener('click', openSettingsModal);
+
+  changeAvatarBtn.addEventListener('click', () => avatarInput.click());
+
+  avatarInput.addEventListener('change', async () => {
+    const file = avatarInput.files[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      showSettingsStatus('Файл занадто великий (максимум 5 МБ)');
+      avatarInput.value = '';
+      return;
+    }
+    const formData = new FormData();
+    formData.append('avatar', file);
+    changeAvatarBtn.disabled = true;
+    try {
+      const res = await fetch('/api/me/avatar', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + state.token },
+        body: formData,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Не вдалося оновити аватарку');
+      state.user.avatarUrl = data.avatarUrl;
+      persistUser();
+      showSettingsStatus('Аватарку оновлено');
+    } catch (err) {
+      showSettingsStatus(err.message);
+    } finally {
+      avatarInput.value = '';
+      changeAvatarBtn.disabled = false;
+    }
+  });
+
+  removeAvatarBtn.addEventListener('click', async () => {
+    if (!state.user.avatarUrl) {
+      showSettingsStatus('Аватарки ще немає');
+      return;
+    }
+    if (!confirm('Видалити аватарку?')) return;
+    removeAvatarBtn.disabled = true;
+    try {
+      const res = await fetch('/api/me/avatar', {
+        method: 'DELETE',
+        headers: { Authorization: 'Bearer ' + state.token },
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || 'Не вдалося видалити аватарку');
+      }
+      state.user.avatarUrl = null;
+      persistUser();
+      showSettingsStatus('Аватарку видалено');
+    } catch (err) {
+      showSettingsStatus(err.message);
+    } finally {
+      removeAvatarBtn.disabled = false;
+    }
   });
 
   function scrollMessagesToBottom() {

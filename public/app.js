@@ -310,6 +310,113 @@
     return data;
   }
 
+  // ---------- Запис голосового ----------
+
+  const recordBtn = el('recordBtn');
+  const recordingBar = el('recordingBar');
+  const recordingTime = el('recordingTime');
+  const recordCancelBtn = el('recordCancelBtn');
+  const recordSendBtn = el('recordSendBtn');
+  const messageFormEl = el('messageForm');
+
+  let mediaRecorder = null;
+  let mediaStream = null;
+  let recordedChunks = [];
+  let recordingStartedAt = 0;
+  let recordingTimerId = null;
+  let recordingCancelled = false;
+
+  function extFromMime(mimeType) {
+    const base = (mimeType || '').split(';')[0].split('/')[1] || 'webm';
+    return base.replace('x-', '');
+  }
+
+  function updateRecordingTime() {
+    const elapsed = Math.floor((Date.now() - recordingStartedAt) / 1000);
+    recordingTime.textContent = formatDuration(elapsed);
+  }
+
+  async function startRecording() {
+    if (!navigator.mediaDevices || !window.MediaRecorder) {
+      alert('Цей браузер не підтримує запис аудіо');
+      return;
+    }
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert('Не вдалося отримати доступ до мікрофона');
+      return;
+    }
+
+    // Ховаємо звичайну форму й будь-які прикріплені файли, показуємо індикатор запису
+    pendingImageFile = null;
+    imageInput.value = '';
+    imagePreview.classList.add('hidden');
+    pendingAudioFile = null;
+    audioInput.value = '';
+    audioPreview.classList.add('hidden');
+
+    recordedChunks = [];
+    recordingCancelled = false;
+    mediaRecorder = new MediaRecorder(mediaStream);
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+    };
+    mediaRecorder.onstop = () => {
+      mediaStream.getTracks().forEach((t) => t.stop());
+      clearInterval(recordingTimerId);
+      messageFormEl.classList.remove('hidden');
+      recordingBar.classList.add('hidden');
+
+      if (recordingCancelled || !recordedChunks.length) return;
+
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || 'audio/webm' });
+      const ext = extFromMime(blob.type);
+      const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type });
+      sendVoiceMessage(file);
+    };
+
+    mediaRecorder.start();
+    recordingStartedAt = Date.now();
+    recordingTime.textContent = '0:00';
+    updateRecordingTime();
+    recordingTimerId = setInterval(updateRecordingTime, 500);
+
+    messageFormEl.classList.add('hidden');
+    recordingBar.classList.remove('hidden');
+  }
+
+  function stopRecording(cancel) {
+    recordingCancelled = !!cancel;
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+    }
+  }
+
+  async function sendVoiceMessage(file) {
+    if (!state.activeChatId) return;
+    try {
+      const uploaded = await uploadFile(file);
+      state.socket.emit('message:send', { chatId: state.activeChatId, text: '', audioUrl: uploaded.url }, (ack) => {
+        if (ack && ack.error) console.error(ack.error);
+      });
+    } catch (err) {
+      alert(err.message);
+    }
+  }
+
+  recordBtn.addEventListener('click', () => {
+    if (!state.activeChatId) return;
+    if (mediaRecorder && mediaRecorder.state === 'recording') {
+      stopRecording(false);
+    } else {
+      startRecording();
+    }
+  });
+
+  recordSendBtn.addEventListener('click', () => stopRecording(false));
+  recordCancelBtn.addEventListener('click', () => stopRecording(true));
+
   async function openChat(chatId, withUser) {
     state.activeChatId = chatId;
     state.activeChatWith = withUser;

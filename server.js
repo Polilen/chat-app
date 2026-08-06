@@ -29,10 +29,11 @@ app.use('/uploads', express.static(UPLOAD_DIR));
 // ---------- Завантаження файлів (картинки + аудіо) ----------
 
 const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
-const ALLOWED_AUDIO_MIME = new Set([
-  'audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg',
-  'audio/webm', 'audio/mp4', 'audio/m4a', 'audio/x-m4a', 'audio/aac',
-]);
+
+function isAllowedAudioMime(mimetype) {
+  const base = (mimetype || '').split(';')[0].trim().toLowerCase();
+  return base.startsWith('audio/');
+}
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -44,8 +45,9 @@ const upload = multer({
   }),
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB (з запасом для аудіо)
   fileFilter: (req, file, cb) => {
-    if (!ALLOWED_IMAGE_MIME.has(file.mimetype) && !ALLOWED_AUDIO_MIME.has(file.mimetype)) {
-      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp) або аудіо (mp3, wav, ogg, m4a, aac)'));
+    const baseMime = (file.mimetype || '').split(';')[0].trim();
+    if (!ALLOWED_IMAGE_MIME.has(baseMime) && !isAllowedAudioMime(file.mimetype)) {
+      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp) або аудіо (mp3, wav, ogg, m4a, webm тощо)'));
     }
     cb(null, true);
   },
@@ -128,7 +130,7 @@ app.post('/api/upload', authMiddleware, (req, res) => {
   upload.single('file')(req, res, (err) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
-    const type = ALLOWED_AUDIO_MIME.has(req.file.mimetype) ? 'audio' : 'image';
+    const type = isAllowedAudioMime(req.file.mimetype) ? 'audio' : 'image';
     res.json({ url: `/uploads/${req.file.filename}`, type });
   });
 });

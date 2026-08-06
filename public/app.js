@@ -316,13 +316,10 @@
 
   attachBtn.addEventListener('click', () => imageInput.click());
 
-  imageInput.addEventListener('change', () => {
-    const file = imageInput.files[0];
-    if (!file) return;
+  function setPendingImage(file) {
     if (file.size > 8 * 1024 * 1024) {
       alert('Файл занадто великий (максимум 8 МБ)');
-      imageInput.value = '';
-      return;
+      return false;
     }
     pendingAudioFile = null;
     audioInput.value = '';
@@ -333,12 +330,40 @@
     pendingImageFile = file;
     imagePreviewImg.src = URL.createObjectURL(file);
     imagePreview.classList.remove('hidden');
+    return true;
+  }
+
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files[0];
+    if (!file) return;
+    if (!setPendingImage(file)) imageInput.value = '';
   });
 
   cancelImageBtn.addEventListener('click', () => {
     pendingImageFile = null;
     imageInput.value = '';
     imagePreview.classList.add('hidden');
+  });
+
+  // ---------- Вставка картинки з буфера обміну (Ctrl+V) ----------
+
+  const PASTE_IGNORE_IDS = new Set(['searchInput', 'loginUsername', 'loginPassword', 'registerUsername', 'registerPassword']);
+
+  document.addEventListener('paste', (e) => {
+    if (!state.activeChatId) return;
+    const active = document.activeElement;
+    if (active && PASTE_IGNORE_IDS.has(active.id)) return;
+    if (!imageModal.classList.contains('hidden') || !forwardModal.classList.contains('hidden') || !settingsModal.classList.contains('hidden')) return;
+    if (!e.clipboardData || !e.clipboardData.items) return;
+
+    const imageItem = [...e.clipboardData.items].find((item) => item.type && item.type.startsWith('image/'));
+    if (!imageItem) return;
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    e.preventDefault();
+    setPendingImage(file);
   });
 
   // ---------- Прикріплення аудіо ----------

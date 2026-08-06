@@ -141,6 +141,7 @@ body {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  min-height: 0;
 }
 
 .sidebar-header {
@@ -241,6 +242,7 @@ body {
   background: var(--bg);
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 .empty-state {
@@ -258,7 +260,8 @@ body {
 .active-chat {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
 }
 
 .chat-header {
@@ -269,6 +272,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
 #chatWithUsername::before { content: "@"; color: var(--text-dim); }
 
@@ -279,6 +283,7 @@ body {
 
 .messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px 24px;
   display: flex;
@@ -378,6 +383,7 @@ body {
   gap: 10px;
   padding: 16px 24px;
   border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .selection-bar {
@@ -388,6 +394,7 @@ body {
   border-top: 1px solid var(--border);
   background: var(--bg-elevated);
   font-size: 13px;
+  flex-shrink: 0;
 }
 
 .selection-actions {
@@ -427,6 +434,7 @@ body {
   display: inline-flex;
   margin: 12px 24px 0;
   max-width: 160px;
+  flex-shrink: 0;
 }
 
 .image-preview img {

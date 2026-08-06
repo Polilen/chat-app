@@ -130,6 +130,19 @@
     loadChats();
   }
 
+  function isPageVisible() {
+    return document.visibilityState === 'visible';
+  }
+
+  function markActiveChatReadIfVisible() {
+    if (!state.activeChatId || !state.socket || !isPageVisible()) return;
+    state.socket.emit('messages:read', { chatId: state.activeChatId });
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (isPageVisible()) markActiveChatReadIfVisible();
+  });
+
   function connectSocket() {
     state.socket = io({ auth: { token: state.token } });
     state.socket.on('message:new', (msg) => {
@@ -139,9 +152,9 @@
       if (state.activeChatId === msg.chatId) {
         appendMessage(msg);
         scrollMessagesToBottom();
-        // Чат відкритий прямо зараз — одразу позначаємо чуже повідомлення прочитаним
+        // Позначаємо прочитаним лише якщо вкладка справді видима (не згорнутий браузер/інша вкладка)
         if (msg.senderId !== state.user.id) {
-          state.socket.emit('messages:read', { chatId: msg.chatId });
+          markActiveChatReadIfVisible();
         }
       }
     });
@@ -551,7 +564,7 @@
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
-      state.socket.emit('messages:read', { chatId });
+      markActiveChatReadIfVisible();
     } catch (err) {
       console.error(err);
     }

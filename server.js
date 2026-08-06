@@ -2,6 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
+const crypto = require('crypto');
+const multer = require('multer');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { Server } = require('socket.io');
@@ -10,12 +13,39 @@ const db = require('./db');
 const JWT_SECRET = process.env.JWT_SECRET || 'change-this-secret-in-production';
 const PORT = process.env.PORT || 3000;
 
+// UPLOAD_DIR дозволяє винести завантажені картинки на Railway Volume, наприклад:
+// UPLOAD_DIR=/data/uploads
+const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(UPLOAD_DIR));
+
+// ---------- Завантаження картинок ----------
+
+const ALLOWED_MIME = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_DIR),
+    filename: (req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || '';
+      cb(null, `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`);
+    },
+  }),
+  limits: { fileSize: 8 * 1024 * 1024 }, // 8 MB
+  fileFilter: (req, file, cb) => {
+    if (!ALLOWED_MIME.has(file.mimetype)) {
+      return cb(new Error('Дозволені лише зображення (jpeg, png, gif, webp)'));
+    }
+    cb(null, true);
+  },
+});
 
 // ---------- Допоміжні функції ----------
 
@@ -90,6 +120,14 @@ app.get('/api/me', authMiddleware, (req, res) => {
   res.json({ user: req.user });
 });
 
+app.post('/api/upload', authMiddleware, (req, res) => {
+  upload.single('image')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
+    res.json({ url: `/uploads/${req.file.filename}` });
+  });
+});
+
 app.get('/api/search', authMiddleware, (req, res) => {
   const q = String(req.query.username || '').trim().toLowerCase();
   if (!q) return res.json({ users: [] });
@@ -121,7 +159,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username FROM users WHERE id = ?').get(row.otherId);
     const lastMsg = db.prepare(
-      'SELECT text, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
+      'SELECT text, image_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
     return {
       chatId: row.chatId,
@@ -144,7 +182,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
   const messages = db.prepare(
-    'SELECT id, sender_id as senderId, text, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
+    'SELECT id, sender_id as senderId, text, image_url as imageUrl, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
   ).all(chatId);
   res.json({ messages });
 });
@@ -168,9 +206,10 @@ io.on('connection', (socket) => {
 
   socket.on('message:send', (payload, ack) => {
     try {
-      const { chatId, text } = payload || {};
+      const { chatId, text, imageUrl } = payload || {};
       const cleanText = String(text || '').trim();
-      if (!chatId || !cleanText) {
+      const cleanImageUrl = imageUrl && imageUrl.startsWith('/uploads/') ? imageUrl : null;
+      if (!chatId || (!cleanText && !cleanImageUrl)) {
         if (ack) ack({ error: 'Порожнє повідомлення' });
         return;
       }
@@ -180,10 +219,10 @@ io.on('connection', (socket) => {
         return;
       }
       const info = db.prepare(
-        'INSERT INTO messages (chat_id, sender_id, text) VALUES (?, ?, ?)'
-      ).run(chatId, socket.user.id, cleanText);
+        'INSERT INTO messages (chat_id, sender_id, text, image_url) VALUES (?, ?, ?, ?)'
+      ).run(chatId, socket.user.id, cleanText, cleanImageUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const otherId = otherUserId(chat, socket.user.id);

@@ -134,9 +134,12 @@
     state.chats.forEach((chat) => {
       const item = document.createElement('div');
       item.className = 'chat-list-item' + (chat.chatId === state.activeChatId ? ' active' : '');
-      const preview = chat.lastMessage
-        ? (chat.lastMessage.sender_id === state.user.id ? 'Ви: ' : '') + chat.lastMessage.text
-        : 'Немає повідомлень';
+      let previewText = 'Немає повідомлень';
+      if (chat.lastMessage) {
+        const prefix = chat.lastMessage.sender_id === state.user.id ? 'Ви: ' : '';
+        previewText = prefix + (chat.lastMessage.image_url ? '📷 Фото' : chat.lastMessage.text);
+      }
+      const preview = previewText;
       item.innerHTML = `
         <span class="chat-list-username">${escapeHtml(chat.withUser.username)}</span>
         <span class="chat-list-preview">${escapeHtml(preview)}</span>
@@ -211,6 +214,50 @@
   const activeChatEl = el('activeChat');
   const messagesEl = el('messages');
 
+  // ---------- Прикріплення картинки ----------
+
+  const attachBtn = el('attachBtn');
+  const imageInput = el('imageInput');
+  const imagePreview = el('imagePreview');
+  const imagePreviewImg = el('imagePreviewImg');
+  const cancelImageBtn = el('cancelImageBtn');
+  let pendingImageFile = null;
+
+  attachBtn.addEventListener('click', () => imageInput.click());
+
+  imageInput.addEventListener('change', () => {
+    const file = imageInput.files[0];
+    if (!file) return;
+    if (file.size > 8 * 1024 * 1024) {
+      alert('Файл занадто великий (максимум 8 МБ)');
+      imageInput.value = '';
+      return;
+    }
+    pendingImageFile = file;
+    imagePreviewImg.src = URL.createObjectURL(file);
+    imagePreview.classList.remove('hidden');
+  });
+
+  cancelImageBtn.addEventListener('click', () => {
+    pendingImageFile = null;
+    imageInput.value = '';
+    imagePreview.classList.add('hidden');
+  });
+
+  async function uploadPendingImage() {
+    if (!pendingImageFile) return null;
+    const formData = new FormData();
+    formData.append('image', pendingImageFile);
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + state.token },
+      body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Не вдалося завантажити фото');
+    return data.url;
+  }
+
   async function openChat(chatId, withUser) {
     state.activeChatId = chatId;
     state.activeChatWith = withUser;
@@ -226,6 +273,7 @@
         chatId,
         senderId: m.senderId,
         text: m.text,
+        imageUrl: m.imageUrl,
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
@@ -240,7 +288,18 @@
     const div = document.createElement('div');
     div.className = 'msg ' + (mine ? 'mine' : 'theirs');
     const time = formatTime(msg.createdAt || msg.created_at);
-    div.innerHTML = `${escapeHtml(msg.text)}<span class="msg-time">${time}</span>`;
+    const imageUrl = msg.imageUrl || msg.image_url;
+
+    let inner = '';
+    if (imageUrl) {
+      inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото" onclick="window.open('${escapeAttr(imageUrl)}','_blank')">`;
+    }
+    if (msg.text) {
+      inner += `<span class="msg-text">${escapeHtml(msg.text)}</span>`;
+    }
+    inner += `<span class="msg-time">${time}</span>`;
+
+    div.innerHTML = inner;
     messagesEl.appendChild(div);
   }
 
@@ -248,15 +307,31 @@
     messagesEl.scrollTop = messagesEl.scrollHeight;
   }
 
-  el('messageForm').addEventListener('submit', (e) => {
+  el('messageForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const input = el('messageInput');
     const text = input.value.trim();
-    if (!text || !state.activeChatId) return;
-    state.socket.emit('message:send', { chatId: state.activeChatId, text }, (ack) => {
-      if (ack && ack.error) console.error(ack.error);
-    });
-    input.value = '';
+    if ((!text && !pendingImageFile) || !state.activeChatId) return;
+
+    const submitBtn = e.target.querySelector('button[type="submit"]');
+    submitBtn.disabled = true;
+    try {
+      let imageUrl = null;
+      if (pendingImageFile) {
+        imageUrl = await uploadPendingImage();
+      }
+      state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl }, (ack) => {
+        if (ack && ack.error) console.error(ack.error);
+      });
+      input.value = '';
+      pendingImageFile = null;
+      imageInput.value = '';
+      imagePreview.classList.add('hidden');
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      submitBtn.disabled = false;
+    }
   });
 
   // ---------- Utils ----------
@@ -265,6 +340,10 @@
     const d = document.createElement('div');
     d.textContent = str;
     return d.innerHTML;
+  }
+
+  function escapeAttr(str) {
+    return String(str).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   function formatTime(iso) {

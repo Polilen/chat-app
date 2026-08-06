@@ -30,7 +30,8 @@ db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     chat_id INTEGER NOT NULL,
     sender_id INTEGER NOT NULL,
-    text TEXT NOT NULL,
+    text TEXT NOT NULL DEFAULT '',
+    image_url TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(chat_id) REFERENCES chats(id),
     FOREIGN KEY(sender_id) REFERENCES users(id)
@@ -38,5 +39,11 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_messages_chat ON messages(chat_id);
 `);
+
+// Міграція для баз, створених до появи картинок у чаті
+const messageColumns = db.prepare('PRAGMA table_info(messages)').all().map((c) => c.name);
+if (!messageColumns.includes('image_url')) {
+  db.exec('ALTER TABLE messages ADD COLUMN image_url TEXT');
+}
 
 module.exports = db;

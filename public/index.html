@@ -64,8 +64,14 @@
           <span id="chatWithUsername"></span>
         </header>
         <div id="messages" class="messages"></div>
+        <div id="imagePreview" class="image-preview hidden">
+          <img id="imagePreviewImg" alt="Прев'ю">
+          <button type="button" id="cancelImageBtn" class="cancel-image-btn">✕</button>
+        </div>
         <form id="messageForm" class="message-form">
-          <input type="text" id="messageInput" placeholder="Повідомлення…" autocomplete="off" required>
+          <input type="file" id="imageInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+          <button type="button" id="attachBtn" class="attach-btn" title="Додати фото">📎</button>
+          <input type="text" id="messageInput" placeholder="Повідомлення…" autocomplete="off">
           <button type="submit">➤</button>
         </form>
       </div>

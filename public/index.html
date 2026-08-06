@@ -62,8 +62,17 @@
       <div id="activeChat" class="active-chat hidden">
         <header class="chat-header">
           <span id="chatWithUsername"></span>
+          <button id="selectModeBtn" class="icon-btn select-mode-btn" title="Виділити повідомлення">☑</button>
         </header>
         <div id="messages" class="messages"></div>
+        <div id="selectionBar" class="selection-bar hidden">
+          <span id="selectionCount">0 обрано</span>
+          <div class="selection-actions">
+            <button id="selectionForwardBtn" class="modal-action-btn small">↪ Переслати</button>
+            <button id="selectionDeleteBtn" class="modal-action-btn small danger" disabled>🗑 Видалити</button>
+            <button id="selectionCancelBtn" class="modal-action-btn small">Скасувати</button>
+          </div>
+        </div>
         <div id="imagePreview" class="image-preview hidden">
           <img id="imagePreviewImg" alt="Прев'ю">
           <button type="button" id="cancelImageBtn" class="cancel-image-btn">✕</button>

@@ -238,6 +238,44 @@ io.on('connection', (socket) => {
       if (ack) ack({ error: 'Помилка сервера' });
     }
   });
+
+  socket.on('message:delete', (payload, ack) => {
+    try {
+      const { chatId, messageIds } = payload || {};
+      const ids = Array.isArray(messageIds) ? messageIds.filter((id) => Number.isInteger(id)) : [];
+      if (!chatId || !ids.length) {
+        if (ack) ack({ error: 'Немає що видаляти' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+      const placeholders = ids.map(() => '?').join(',');
+      // Видаляти можна лише власні повідомлення
+      const ownMessages = db.prepare(
+        `SELECT id FROM messages WHERE chat_id = ? AND sender_id = ? AND id IN (${placeholders})`
+      ).all(chatId, socket.user.id, ...ids);
+      const deletableIds = ownMessages.map((m) => m.id);
+      if (!deletableIds.length) {
+        if (ack) ack({ error: 'Можна видаляти лише власні повідомлення' });
+        return;
+      }
+      const delPlaceholders = deletableIds.map(() => '?').join(',');
+      db.prepare(`DELETE FROM messages WHERE id IN (${delPlaceholders})`).run(...deletableIds);
+
+      const otherId = otherUserId(chat, socket.user.id);
+      const payloadOut = { chatId, messageIds: deletableIds };
+      io.to(`user:${socket.user.id}`).emit('message:deleted', payloadOut);
+      io.to(`user:${otherId}`).emit('message:deleted', payloadOut);
+
+      if (ack) ack({ ok: true, deletedIds: deletableIds });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
 });
 
 server.listen(PORT, () => {

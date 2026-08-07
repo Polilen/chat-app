@@ -747,14 +747,14 @@ body {
 }
 
 .attach-btn {
-  width: 40px;
-  height: 40px;
+  width: 44px;
+  height: 44px;
   flex-shrink: 0;
   border-radius: 10px;
   border: 1px solid var(--border);
   background: var(--bg-elevated);
   color: var(--text-dim);
-  font-size: 17px;
+  font-size: 18px;
   cursor: pointer;
 }
 .attach-btn:hover { color: var(--accent); border-color: var(--accent); }
@@ -1069,10 +1069,10 @@ body {
     padding: 10px 8px;
   }
   .attach-btn {
-    width: 34px;
-    height: 34px;
-    font-size: 15px;
-    border-radius: 8px;
+    width: 38px;
+    height: 38px;
+    font-size: 16px;
+    border-radius: 9px;
   }
   .message-form input,
   .message-form textarea {
@@ -1081,6 +1081,7 @@ body {
   }
   .message-form button[type="submit"] {
     width: 38px;
+    padding: 9px 0;
     flex-shrink: 0;
   }
 

@@ -1752,7 +1752,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
-    else if (!userProfileModal.classList.contains('hidden')) closeUserProfileModal();
+    else if (appScreen.classList.contains('profile-open')) closeUserProfileModal();
     else if (!groupInfoModal.classList.contains('hidden')) closeGroupInfoModal();
     else if (!createGroupModal.classList.contains('hidden')) closeCreateGroupModal();
     else if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
@@ -1834,7 +1834,7 @@
     profilePhotos = [];
     profilePhotoIndex = 0;
     renderProfilePhoto();
-    userProfileModal.classList.remove('hidden');
+    appScreen.classList.add('profile-open');
     try {
       const { user } = await api(`/api/users/${userId}`);
       userProfileUsername.textContent = user.username;
@@ -1888,7 +1888,7 @@
   });
 
   function closeUserProfileModal() {
-    userProfileModal.classList.add('hidden');
+    appScreen.classList.remove('profile-open');
   }
 
   document.querySelectorAll('[data-close="userProfile"]').forEach((btn) => btn.addEventListener('click', closeUserProfileModal));

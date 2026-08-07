@@ -133,13 +133,15 @@ body {
 /* ---------- App screen ---------- */
 
 .app-screen {
-  display: grid;
-  grid-template-columns: 320px 1fr;
+  display: flex;
   height: 100vh;
   height: var(--app-height, 100vh);
+  overflow: hidden;
 }
 
 .sidebar {
+  width: 320px;
+  flex-shrink: 0;
   background: var(--bg-panel);
   border-right: 1px solid var(--border);
   display: flex;
@@ -316,6 +318,7 @@ body {
   background: var(--bg);
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
   min-width: 0;
 }
@@ -1259,11 +1262,26 @@ body {
 }
 
 @media (max-width: 720px) {
-  .app-screen { grid-template-columns: 1fr; }
+  .sidebar { width: 100%; }
   .chat-panel { display: none; }
   .app-screen.chat-open .sidebar { display: none; }
   .app-screen.chat-open .chat-panel { display: flex; }
   .chat-back-btn { display: inline-flex; align-items: center; justify-content: center; }
+
+  /* Профіль на мобільних — окремий повноекранний екран зі стрілкою "назад", а не панель, що виштовхує чат */
+  .profile-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    width: 100% !important;
+    border-left: none;
+    transform: translateX(100%);
+    transition: transform 0.22s ease;
+  }
+  #appScreen.profile-open .profile-panel {
+    transform: translateX(0);
+  }
+  .profile-panel-content { width: 100%; }
 
   /* Панель вкладень на вузьких екранах: менші кнопки й відступи, щоб усе влазило по ширині */
   .message-form {
@@ -1474,30 +1492,30 @@ body {
 .avatar-history-item:hover { border-color: var(--accent); transform: scale(1.05); }
 .avatar-history-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
-/* ---------- Панель профілю (виїжджає справа, як у Telegram) ---------- */
+/* ---------- Панель профілю (на десктопі виштовхує чат, як у Telegram) ---------- */
 
 .profile-panel {
-  position: fixed;
-  inset: 0;
-  z-index: 150;
-  display: flex;
-  justify-content: flex-end;
+  width: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  transition: width 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
+.profile-panel.hidden { display: block; } /* саме ширина керує видимістю, не display */
 
 .profile-panel-content {
-  position: relative;
-  z-index: 1;
-  width: min(380px, 100vw);
+  width: min(380px, 40vw);
   height: 100%;
-  background: var(--bg-panel);
-  box-shadow: -12px 0 40px rgba(0,0,0,0.5);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
-  transform: translateX(100%);
-  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
-.profile-panel:not(.hidden) .profile-panel-content { transform: translateX(0); }
+
+/* Клас відкриття вішається на #appScreen — так ширина рахується один раз і плавно анімується */
+#appScreen.profile-open .profile-panel {
+  width: min(380px, 40vw);
+}
 
 .profile-panel-header {
   display: flex;

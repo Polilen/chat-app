@@ -174,9 +174,8 @@ function getPresenceForViewer(userId, chatId, viewerId) {
   const justNow = secondsSinceSeen < 60;
 
   if (!row.showLastSeen) {
-    // Активність прихована — ніколи не показуємо точний час чи загальний онлайн,
-    // лише розпливчасте "був(ла) щойно" / "був(ла) недавно" (без точного часу)
-    return { online: false, lastSeenAt: null, vague: true, justNow };
+    // Активність прихована — завжди розпливчасте "був(ла) недавно", без точного часу і без "щойно"
+    return { online: false, lastSeenAt: null, vague: true, justNow: false };
   }
 
   return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, vague: false, justNow };

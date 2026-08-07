@@ -1404,7 +1404,7 @@
   function formatPresence(presence) {
     if (!presence) return null;
     if (presence.online) return { text: 'у мережі', online: true };
-    if (presence.vague) return { text: presence.justNow ? 'був(ла) щойно' : 'був(ла) недавно', online: false };
+    if (presence.vague) return { text: 'був(ла) недавно', online: false };
     if (!presence.lastSeenAt) return null;
 
     const seenDate = parseServerDate(presence.lastSeenAt);

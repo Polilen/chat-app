@@ -908,6 +908,19 @@ body {
   height: 34px;
 }
 
+.record-cancel-btn {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  background: var(--bg-elevated);
+  color: var(--danger);
+  font-size: 14px;
+  cursor: pointer;
+}
+.record-cancel-btn:hover { background: var(--danger); color: #fff; }
+
 .msg-audio {
   display: flex;
   align-items: center;

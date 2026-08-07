@@ -1,4 +1,13 @@
 (function () {
+  // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
+  // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
+  function setAppHeight() {
+    document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`);
+  }
+  setAppHeight();
+  window.addEventListener('resize', setAppHeight);
+  window.addEventListener('orientationchange', setAppHeight);
+
   const state = {
     token: localStorage.getItem('token') || null,
     user: JSON.parse(localStorage.getItem('user') || 'null'),

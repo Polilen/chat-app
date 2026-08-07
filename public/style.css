@@ -20,7 +20,9 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
+  /* Реальна висота вікна (без адресного рядка мобільного браузера), рахується в JS */
   height: 100vh;
+  height: var(--app-height, 100vh);
   overflow: hidden;
 }
 
@@ -30,6 +32,7 @@ body {
 
 .auth-screen {
   height: 100vh;
+  height: var(--app-height, 100vh);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -133,6 +136,7 @@ body {
   display: grid;
   grid-template-columns: 320px 1fr;
   height: 100vh;
+  height: var(--app-height, 100vh);
 }
 
 .sidebar {

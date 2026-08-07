@@ -614,6 +614,7 @@
     exitSelectMode();
     emptyState.classList.add('hidden');
     activeChatEl.classList.remove('hidden');
+    appScreen.classList.add('chat-open');
     el('chatWithUsername').textContent = withUser.username;
     renderAvatarInto(el('chatHeaderAvatar'), withUser.username, withUser.avatarUrl);
     renderChatHeaderStatus(withUser.presence);
@@ -1248,6 +1249,12 @@
   // ---------- Налаштування профілю (аватарка) ----------
 
   const meProfileBtn = el('meProfileBtn');
+  const chatBackBtn = el('chatBackBtn');
+
+  chatBackBtn.addEventListener('click', () => {
+    appScreen.classList.remove('chat-open');
+  });
+
   const settingsModal = el('settingsModal');
   const settingsAvatar = el('settingsAvatar');
   const settingsUsername = el('settingsUsername');

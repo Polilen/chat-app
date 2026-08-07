@@ -945,11 +945,18 @@ body {
 }
 .message-form button:hover { background: #45e4c1; }
 
+.chat-back-btn {
+  display: none;
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
 @media (max-width: 720px) {
   .app-screen { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
-  .app-screen.show-sidebar .sidebar { display: flex; }
-  .app-screen.show-sidebar .chat-panel { display: none; }
+  .chat-panel { display: none; }
+  .app-screen.chat-open .sidebar { display: none; }
+  .app-screen.chat-open .chat-panel { display: flex; }
+  .chat-back-btn { display: inline-flex; align-items: center; justify-content: center; }
 }
 
 /* ---------- Модалка перегляду фото ---------- */

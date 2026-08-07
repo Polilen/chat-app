@@ -80,6 +80,19 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
 
+  CREATE TABLE IF NOT EXISTS message_reads (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    read_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(message_id, user_id),
+    FOREIGN KEY(message_id) REFERENCES messages(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_message_reads_message ON message_reads(message_id);
+  CREATE INDEX IF NOT EXISTS idx_message_reads_user ON message_reads(user_id);
+
   CREATE TABLE IF NOT EXISTS message_deletions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,

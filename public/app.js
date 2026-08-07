@@ -866,13 +866,16 @@
   function renderReactions(div, reactions) {
     const box = div.querySelector('.msg-reactions');
     if (!box) return;
+    div.dataset.reactionsJson = JSON.stringify(reactions || []);
     box.innerHTML = '';
     reactions.forEach((r) => {
+      const users = r.users || [];
       const mine = r.userIds && r.userIds.includes(state.user.id);
       const pill = document.createElement('button');
       pill.type = 'button';
       pill.className = 'msg-reaction-pill' + (mine ? ' mine' : '');
       pill.textContent = `${r.emoji} ${r.userIds.length}`;
+      if (users.length) pill.title = users.map((u) => u.username).join(', ');
       pill.addEventListener('click', (e) => {
         e.stopPropagation();
         if (state.selectionMode) return;
@@ -959,6 +962,22 @@
     });
     reactionPopover.appendChild(emojiRow);
 
+    // Хто саме поставив яку реакцію
+    let reactions = [];
+    try { reactions = JSON.parse(msgDiv.dataset.reactionsJson || '[]'); } catch (e) { reactions = []; }
+    if (reactions.length) {
+      const reactionsBox = document.createElement('div');
+      reactionsBox.className = 'context-menu-reactions';
+      reactions.forEach((r) => {
+        const line = document.createElement('div');
+        line.className = 'context-menu-reaction-line';
+        const names = (r.users || []).map((u) => u.username).join(', ');
+        line.innerHTML = `<span>${escapeHtml(r.emoji)}</span> ${escapeHtml(names)}`;
+        reactionsBox.appendChild(line);
+      });
+      reactionPopover.appendChild(reactionsBox);
+    }
+
     const actionsRow = document.createElement('div');
     actionsRow.className = 'context-menu-actions';
 
@@ -972,6 +991,18 @@
       openForwardModal([{ text: info.text, imageUrl: info.imageUrl, audioUrl: info.audioUrl, videoUrl: info.videoUrl }]);
     });
     actionsRow.appendChild(forwardBtn);
+
+    if (info.mine) {
+      const seenBtn = document.createElement('button');
+      seenBtn.type = 'button';
+      seenBtn.className = 'context-menu-item';
+      seenBtn.innerHTML = '<span>👁</span> Переглянуто';
+      seenBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        showReadReceipts(info.messageId, seenBtn);
+      });
+      actionsRow.appendChild(seenBtn);
+    }
 
     const deleteBtn = document.createElement('button');
     deleteBtn.type = 'button';
@@ -988,18 +1019,49 @@
 
     reactionPopover.classList.remove('hidden', 'closing');
     // Спочатку показуємо, щоб дізнатись реальні розміри, потім позиціонуємо в межах екрана
-    const rect = reactionPopover.getBoundingClientRect();
-    let left = x - rect.width / 2;
-    let top = y - rect.height - 12;
-    left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
-    if (top < 8) top = y + 12;
-    reactionPopover.style.left = `${left}px`;
-    reactionPopover.style.top = `${top}px`;
+    positionPopoverNear(reactionPopover, x, y);
 
     // Перезапускаємо CSS-анімацію появи
     reactionPopover.classList.remove('animate-in');
     void reactionPopover.offsetWidth;
     reactionPopover.classList.add('animate-in');
+  }
+
+  function positionPopoverNear(popoverEl, x, y) {
+    const rect = popoverEl.getBoundingClientRect();
+    let left = x - rect.width / 2;
+    let top = y - rect.height - 12;
+    left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+    if (top < 8) top = y + 12;
+    top = Math.min(top, window.innerHeight - rect.height - 8);
+    popoverEl.style.left = `${left}px`;
+    popoverEl.style.top = `${top}px`;
+  }
+
+  async function showReadReceipts(messageId, anchorBtn) {
+    let box = reactionPopover.querySelector('.context-menu-read-receipts');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'context-menu-read-receipts';
+      box.textContent = 'Завантаження…';
+      reactionPopover.insertBefore(box, anchorBtn.closest('.context-menu-actions'));
+    }
+    try {
+      const { reads } = await api(`/api/messages/${messageId}/reads`);
+      if (!reads.length) {
+        box.textContent = 'Ще ніхто не переглянув';
+      } else {
+        box.innerHTML = '';
+        reads.forEach((r) => {
+          const line = document.createElement('div');
+          line.className = 'context-menu-read-line';
+          line.textContent = `${r.username} · ${formatTime(r.readAt)}`;
+          box.appendChild(line);
+        });
+      }
+    } catch (err) {
+      box.textContent = 'Не вдалося завантажити';
+    }
   }
 
   function closeMessageMenu() {

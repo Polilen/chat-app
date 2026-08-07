@@ -141,9 +141,13 @@ function groupReactions(rows) {
   const byEmoji = {};
   rows.forEach((r) => {
     if (!byEmoji[r.emoji]) byEmoji[r.emoji] = [];
-    byEmoji[r.emoji].push(r.userId);
+    byEmoji[r.emoji].push({ id: r.userId, username: r.username });
   });
-  return Object.entries(byEmoji).map(([emoji, userIds]) => ({ emoji, userIds }));
+  return Object.entries(byEmoji).map(([emoji, users]) => ({
+    emoji,
+    users,
+    userIds: users.map((u) => u.id), // для сумісності зі старим форматом на клієнті
+  }));
 }
 
 // ---------- Присутність (онлайн / був(ла) нещодавно) ----------
@@ -493,6 +497,23 @@ app.get('/api/groups/:chatId', authMiddleware, (req, res) => {
   res.json({ group: serializeGroup(chatId) });
 });
 
+app.get('/api/messages/:messageId/reads', authMiddleware, (req, res) => {
+  const messageId = Number(req.params.messageId);
+  const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+  if (!message) return res.status(404).json({ error: 'Повідомлення не знайдено' });
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(message.chat_id);
+  if (!chat || !isParticipant(chat, req.user.id)) {
+    return res.status(403).json({ error: 'Немає доступу до цього чату' });
+  }
+  const reads = db.prepare(`
+    SELECT u.id, u.username, u.avatar_url as avatarUrl, mr.read_at as readAt
+    FROM message_reads mr JOIN users u ON u.id = mr.user_id
+    WHERE mr.message_id = ?
+    ORDER BY mr.read_at ASC
+  `).all(messageId);
+  res.json({ reads });
+});
+
 app.get('/api/chats', authMiddleware, (req, res) => {
   const directChats = db.prepare(`
     SELECT c.id as chatId,
@@ -588,14 +609,15 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   `).all(chatId, cutoffId, req.user.id);
 
   const reactionRows = db.prepare(`
-    SELECT message_id as messageId, emoji, user_id as userId
-    FROM reactions
-    WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)
+    SELECT r.message_id as messageId, r.emoji, r.user_id as userId, u.username
+    FROM reactions r
+    JOIN users u ON u.id = r.user_id
+    WHERE r.message_id IN (SELECT id FROM messages WHERE chat_id = ?)
   `).all(chatId);
   const reactionsByMessage = {};
   reactionRows.forEach((r) => {
     if (!reactionsByMessage[r.messageId]) reactionsByMessage[r.messageId] = [];
-    reactionsByMessage[r.messageId].push({ emoji: r.emoji, userId: r.userId });
+    reactionsByMessage[r.messageId].push({ emoji: r.emoji, userId: r.userId, username: r.username });
   });
   messages.forEach((m) => {
     m.reactions = groupReactions(reactionsByMessage[m.id] || []);
@@ -763,9 +785,11 @@ io.on('connection', (socket) => {
         `).run(messageId, socket.user.id, emoji);
       }
 
-      const rows = db.prepare(
-        'SELECT emoji, user_id as userId FROM reactions WHERE message_id = ?'
-      ).all(messageId);
+      const rows = db.prepare(`
+        SELECT r.emoji, r.user_id as userId, u.username
+        FROM reactions r JOIN users u ON u.id = r.user_id
+        WHERE r.message_id = ?
+      `).all(messageId);
       const reactions = groupReactions(rows);
 
       const out = { chatId: chat.id, messageId, reactions };
@@ -792,22 +816,32 @@ io.on('connection', (socket) => {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
         return;
       }
-      const unread = db.prepare(
-        'SELECT id FROM messages WHERE chat_id = ? AND sender_id != ? AND read_at IS NULL'
-      ).all(chatId, socket.user.id);
+      // Усі повідомлення не від мене, які я особисто ще не позначав прочитаними
+      // (важливо для груп: кожен читач фіксується окремо, а не лише перший)
+      const toMark = db.prepare(`
+        SELECT id FROM messages
+        WHERE chat_id = ? AND sender_id != ?
+          AND id NOT IN (SELECT message_id FROM message_reads WHERE user_id = ?)
+      `).all(chatId, socket.user.id, socket.user.id);
 
-      if (unread.length) {
-        const ids = unread.map((m) => m.id);
+      if (toMark.length) {
+        const ids = toMark.map((m) => m.id);
+        const insertRead = db.prepare('INSERT OR IGNORE INTO message_reads (message_id, user_id) VALUES (?, ?)');
+        ids.forEach((id) => insertRead.run(id, socket.user.id));
+
         const placeholders = ids.map(() => '?').join(',');
-        db.prepare(`UPDATE messages SET read_at = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
+        // read_at на самому повідомленні виставляється лише один раз (першим читачем) —
+        // це те, що керує однією/двома галочками; хто саме прочитав — тепер у message_reads
+        db.prepare(`UPDATE messages SET read_at = COALESCE(read_at, datetime('now')) WHERE id IN (${placeholders})`).run(...ids);
         const readAt = db.prepare('SELECT read_at FROM messages WHERE id = ?').get(ids[0]).read_at;
 
+        const out = { chatId, messageIds: ids, readAt, readerId: socket.user.id };
         getParticipantIds(chat, socket.user.id).forEach((uid) => {
-          io.to(`user:${uid}`).emit('messages:read', { chatId, messageIds: ids, readAt });
+          io.to(`user:${uid}`).emit('messages:read', out);
         });
       }
 
-      if (ack) ack({ ok: true, count: unread.length });
+      if (ack) ack({ ok: true, count: toMark.length });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });
@@ -841,6 +875,7 @@ io.on('connection', (socket) => {
         }
         const delPlaceholders = deletableIds.map(() => '?').join(',');
         db.prepare(`DELETE FROM message_deletions WHERE message_id IN (${delPlaceholders})`).run(...deletableIds);
+        db.prepare(`DELETE FROM message_reads WHERE message_id IN (${delPlaceholders})`).run(...deletableIds);
         db.prepare(`DELETE FROM messages WHERE id IN (${delPlaceholders})`).run(...deletableIds);
 
         const payloadOut = { chatId, messageIds: deletableIds, scope: 'everyone' };
@@ -898,6 +933,7 @@ io.on('connection', (socket) => {
         const otherId = otherUserId(chat, socket.user.id);
         db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
         db.prepare('DELETE FROM message_deletions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
         db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
         db.prepare('DELETE FROM chat_deletions WHERE chat_id = ?').run(chatId);
         db.prepare('DELETE FROM chats WHERE id = ?').run(chatId);
@@ -945,6 +981,7 @@ io.on('connection', (socket) => {
         // Останній учасник вийшов — групу можна видалити повністю
         db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
         db.prepare('DELETE FROM message_deletions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
         db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
         db.prepare('DELETE FROM chat_deletions WHERE chat_id = ?').run(chatId);
         db.prepare('DELETE FROM chats WHERE id = ?').run(chatId);

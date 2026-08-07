@@ -206,6 +206,9 @@
       }
       loadChats();
     });
+    state.socket.on('chat:deleted', ({ chatId }) => {
+      applyChatRemoved(chatId);
+    });
     state.socket.on('avatar:updated', ({ userId, avatarUrl }) => {
       let changed = false;
       state.chats.forEach((chat) => {
@@ -288,6 +291,11 @@
         item.querySelector('.avatar-slot').appendChild(dot);
       }
       item.addEventListener('click', () => openChat(chat.chatId, chat.withUser));
+      item.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        openChatMenu(e.clientX, e.clientY, item, chat);
+      });
+      attachChatLongPress(item, chat);
       list.appendChild(item);
     });
   }
@@ -942,13 +950,146 @@
     if (!reactionPopover.classList.contains('hidden') && !reactionPopover.contains(e.target)) {
       closeMessageMenu();
     }
+    if (!chatMenuPopover.classList.contains('hidden') && !chatMenuPopover.contains(e.target)) {
+      closeChatMenu();
+    }
   });
   document.addEventListener('contextmenu', (e) => {
     if (!e.target.closest('.msg')) closeMessageMenu();
+    if (!e.target.closest('.chat-list-item')) closeChatMenu();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') closeMessageMenu();
+    if (e.key === 'Escape') { closeMessageMenu(); closeChatMenu(); }
   });
+
+  // ---------- Меню чату (правий клік / довге натискання на чаті у списку) ----------
+
+  const chatMenuPopover = el('chatMenuPopover');
+  let chatMenuTargetDiv = null;
+
+  function openChatMenu(x, y, itemDiv, chat) {
+    closeMessageMenu();
+    closeChatMenu();
+    chatMenuTargetDiv = itemDiv;
+    itemDiv.classList.add('context-active');
+
+    chatMenuPopover.innerHTML = '';
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'context-menu-actions';
+    actionsRow.style.borderTop = 'none';
+    actionsRow.style.paddingTop = '0';
+
+    const forMeBtn = document.createElement('button');
+    forMeBtn.type = 'button';
+    forMeBtn.className = 'context-menu-item';
+    forMeBtn.innerHTML = '<span>🙈</span> Видалити чат для мене';
+    forMeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeChatMenu();
+      deleteChat(chat.chatId, 'me');
+    });
+    actionsRow.appendChild(forMeBtn);
+
+    const forBothBtn = document.createElement('button');
+    forBothBtn.type = 'button';
+    forBothBtn.className = 'context-menu-item danger';
+    forBothBtn.innerHTML = '<span>🗑</span> Видалити чат для обох';
+    forBothBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeChatMenu();
+      if (!confirm(`Видалити всю переписку з @${chat.withUser.username} для обох? Це незворотно.`)) return;
+      deleteChat(chat.chatId, 'both');
+    });
+    actionsRow.appendChild(forBothBtn);
+
+    chatMenuPopover.appendChild(actionsRow);
+
+    chatMenuPopover.classList.remove('hidden');
+    const rect = chatMenuPopover.getBoundingClientRect();
+    let left = x - rect.width / 2;
+    let top = y - rect.height - 12;
+    left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+    if (top < 8) top = y + 12;
+    chatMenuPopover.style.left = `${left}px`;
+    chatMenuPopover.style.top = `${top}px`;
+
+    chatMenuPopover.classList.remove('animate-in');
+    void chatMenuPopover.offsetWidth;
+    chatMenuPopover.classList.add('animate-in');
+  }
+
+  function closeChatMenu() {
+    if (chatMenuTargetDiv) {
+      chatMenuTargetDiv.classList.remove('context-active');
+      chatMenuTargetDiv = null;
+    }
+    chatMenuPopover.classList.add('hidden');
+    chatMenuPopover.classList.remove('animate-in');
+  }
+
+  function attachChatLongPress(itemDiv, chat) {
+    if (!isTouchDevice) return;
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    let moved = false;
+    let fired = false;
+
+    itemDiv.addEventListener('touchstart', (e) => {
+      const touch = e.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      moved = false;
+      fired = false;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (moved) return;
+        fired = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        openChatMenu(startX, startY, itemDiv, chat);
+      }, 450);
+    }, { passive: true });
+
+    itemDiv.addEventListener('touchmove', (e) => {
+      const touch = e.touches[0];
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) {
+        moved = true;
+        clearTimeout(timer);
+      }
+    }, { passive: true });
+
+    itemDiv.addEventListener('touchend', (e) => {
+      clearTimeout(timer);
+      if (fired) {
+        e.preventDefault();
+        fired = false;
+      }
+    });
+    itemDiv.addEventListener('touchcancel', () => clearTimeout(timer));
+  }
+
+  function deleteChat(chatId, scope) {
+    state.socket.emit('chat:delete', { chatId, scope }, (ack) => {
+      if (ack && ack.error) {
+        alert(ack.error);
+        return;
+      }
+      applyChatRemoved(chatId);
+    });
+  }
+
+  function applyChatRemoved(chatId) {
+    state.chats = state.chats.filter((c) => c.chatId !== chatId);
+    renderChatList();
+    if (state.activeChatId === chatId) {
+      state.activeChatId = null;
+      state.activeChatWith = null;
+      exitSelectMode();
+      activeChatEl.classList.add('hidden');
+      emptyState.classList.remove('hidden');
+      appScreen.classList.remove('chat-open');
+    }
+  }
 
   // ---------- Поле вводу, що росте (до ~4 рядків, далі скрол) ----------
 

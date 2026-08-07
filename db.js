@@ -70,6 +70,20 @@ db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_deletions_message ON message_deletions(message_id);
   CREATE INDEX IF NOT EXISTS idx_deletions_user ON message_deletions(user_id);
+
+  CREATE TABLE IF NOT EXISTS chat_deletions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    last_message_id INTEGER NOT NULL DEFAULT 0,
+    deleted_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(chat_id, user_id),
+    FOREIGN KEY(chat_id) REFERENCES chats(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_chat_deletions_chat ON chat_deletions(chat_id);
+  CREATE INDEX IF NOT EXISTS idx_chat_deletions_user ON chat_deletions(user_id);
 `);
 
 // Міграція для баз, створених до появи картинок/аудіо у чаті
@@ -97,6 +111,12 @@ if (!userColumns.includes('last_seen_at')) {
 }
 if (!userColumns.includes('show_last_seen')) {
   db.exec('ALTER TABLE users ADD COLUMN show_last_seen INTEGER NOT NULL DEFAULT 1');
+}
+
+// Міграція для баз, створених до появи видалення чату "для мене"
+const chatDeletionColumns = db.prepare('PRAGMA table_info(chat_deletions)').all().map((c) => c.name);
+if (chatDeletionColumns.length && !chatDeletionColumns.includes('last_message_id')) {
+  db.exec("ALTER TABLE chat_deletions ADD COLUMN last_message_id INTEGER NOT NULL DEFAULT 0");
 }
 
 module.exports = db;

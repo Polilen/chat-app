@@ -343,6 +343,8 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
   if (!target) return res.status(404).json({ error: 'Користувача не знайдено' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'Не можна писати самому собі' });
   const chat = getOrCreateChat(req.user.id, target.id);
+  // Явне відкриття чату "повертає" його у список, навіть якщо раніше видалили "для мене"
+  db.prepare('DELETE FROM chat_deletions WHERE chat_id = ? AND user_id = ?').run(chat.id, req.user.id);
   res.json({
     chat: {
       id: chat.id,
@@ -361,8 +363,13 @@ app.get('/api/chats', authMiddleware, (req, res) => {
     SELECT c.id as chatId,
            CASE WHEN c.user1_id = ? THEN c.user2_id ELSE c.user1_id END as otherId
     FROM chats c
-    WHERE c.user1_id = ? OR c.user2_id = ?
-  `).all(req.user.id, req.user.id, req.user.id);
+    LEFT JOIN chat_deletions cd ON cd.chat_id = c.id AND cd.user_id = ?
+    WHERE (c.user1_id = ? OR c.user2_id = ?)
+      AND (
+        cd.id IS NULL
+        OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id AND m.id > cd.last_message_id)
+      )
+  `).all(req.user.id, req.user.id, req.user.id, req.user.id);
 
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
@@ -678,6 +685,50 @@ io.on('connection', (socket) => {
       io.to(`user:${socket.user.id}`).emit('message:deleted', { chatId, messageIds: visibleIds, scope: 'me' });
 
       if (ack) ack({ ok: true, deletedIds: visibleIds, scope: 'me' });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('chat:delete', (payload, ack) => {
+    try {
+      const { chatId, scope } = payload || {};
+      if (!chatId) {
+        if (ack) ack({ error: 'Не вказано чат' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+
+      if (scope === 'both') {
+        const otherId = otherUserId(chat, socket.user.id);
+        db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM message_deletions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
+        db.prepare('DELETE FROM chat_deletions WHERE chat_id = ?').run(chatId);
+        db.prepare('DELETE FROM chats WHERE id = ?').run(chatId);
+
+        const payloadOut = { chatId, scope: 'both' };
+        io.to(`user:${socket.user.id}`).emit('chat:deleted', payloadOut);
+        io.to(`user:${otherId}`).emit('chat:deleted', payloadOut);
+
+        if (ack) ack({ ok: true, scope: 'both' });
+        return;
+      }
+
+      // scope === 'me' — ховаємо чат лише зі свого списку; якщо прийде нове повідомлення, чат з'явиться знову
+      const maxMsg = db.prepare('SELECT COALESCE(MAX(id), 0) as maxId FROM messages WHERE chat_id = ?').get(chatId);
+      db.prepare(`
+        INSERT INTO chat_deletions (chat_id, user_id, deleted_at, last_message_id) VALUES (?, ?, datetime('now'), ?)
+        ON CONFLICT(chat_id, user_id) DO UPDATE SET deleted_at = datetime('now'), last_message_id = excluded.last_message_id
+      `).run(chatId, socket.user.id, maxMsg.maxId);
+
+      io.to(`user:${socket.user.id}`).emit('chat:deleted', { chatId, scope: 'me' });
+      if (ack) ack({ ok: true, scope: 'me' });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

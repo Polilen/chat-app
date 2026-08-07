@@ -778,6 +778,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  opacity: 1;
+  transition: opacity 0.16s ease;
+}
+.messages.chat-switching {
+  opacity: 0;
+  transition: none;
 }
 
 .msg {
@@ -817,7 +823,14 @@ body {
   align-items: center;
   gap: 6px;
   margin-bottom: 4px;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 2px 4px;
+  margin-left: -4px;
+  transition: background-color 0.12s;
 }
+.msg-sender-row:hover { background: rgba(255,255,255,0.06); }
+.msg-sender-row:hover .msg-sender-name { text-decoration: underline; }
 
 .msg-sender-avatar {
   width: 18px;

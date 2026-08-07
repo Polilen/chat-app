@@ -669,6 +669,20 @@
   recordSendBtn.addEventListener('click', () => stopRecording(false));
   recordCancelBtn.addEventListener('click', () => stopRecording(true));
 
+  async function openPrivateChatWithUser(username) {
+    if (username === state.user.username) return;
+    try {
+      const { chat } = await api('/api/chats/start', {
+        method: 'POST',
+        body: JSON.stringify({ username }),
+      });
+      await loadChats();
+      openChat({ chatId: chat.id, isGroup: false, withUser: chat.withUser });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
   async function openChat(entry) {
     pauseAllAudio();
     const chatId = entry.chatId;
@@ -694,6 +708,9 @@
     sendChatActiveUpdate();
     renderChatList();
 
+    // Плавний перехід: приховуємо старий вміст, показуємо новий уже після завантаження
+    messagesEl.classList.add('chat-switching');
+
     try {
       const { messages } = await api(`/api/chats/${chatId}/messages`);
       messagesEl.innerHTML = '';
@@ -715,6 +732,9 @@
       markActiveChatReadIfVisible();
     } catch (err) {
       console.error(err);
+    } finally {
+      // Знімаємо клас у наступному кадрі — саме тоді запуститься CSS-перехід плавної появи
+      requestAnimationFrame(() => messagesEl.classList.remove('chat-switching'));
     }
   }
 
@@ -799,6 +819,12 @@
     if (showSenderName) {
       const senderAvatarUrl = msg.senderAvatarUrl || msg.sender_avatar_url;
       renderAvatarInto(div.querySelector('.msg-sender-avatar'), senderUsername, senderAvatarUrl);
+      const senderRow = div.querySelector('.msg-sender-row');
+      senderRow.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.selectionMode) return;
+        openPrivateChatWithUser(senderUsername);
+      });
     }
 
     if (imageUrl) {

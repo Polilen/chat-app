@@ -367,9 +367,13 @@ app.get('/api/chats', authMiddleware, (req, res) => {
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
     if (other) other.presence = getPresenceForViewer(other.id, row.chatId, req.user.id);
-    const lastMsg = db.prepare(
-      'SELECT text, image_url, audio_url, video_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
-    ).get(row.chatId);
+    const lastMsg = db.prepare(`
+      SELECT text, image_url, audio_url, video_url, sender_id, created_at
+      FROM messages
+      WHERE chat_id = ?
+        AND id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
+      ORDER BY id DESC LIMIT 1
+    `).get(row.chatId, req.user.id);
     return {
       chatId: row.chatId,
       withUser: other,
@@ -390,9 +394,14 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   if (!chat || (chat.user1_id !== req.user.id && chat.user2_id !== req.user.id)) {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
-  const messages = db.prepare(
-    'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
-  ).all(chatId);
+  const messages = db.prepare(`
+    SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl,
+           video_url as videoUrl, read_at as readAt, created_at as createdAt
+    FROM messages
+    WHERE chat_id = ?
+      AND id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
+    ORDER BY id ASC
+  `).all(chatId, req.user.id);
 
   const reactionRows = db.prepare(`
     SELECT message_id as messageId, emoji, user_id as userId
@@ -614,7 +623,7 @@ io.on('connection', (socket) => {
 
   socket.on('message:delete', (payload, ack) => {
     try {
-      const { chatId, messageIds } = payload || {};
+      const { chatId, messageIds, scope } = payload || {};
       const ids = Array.isArray(messageIds) ? messageIds.filter((id) => Number.isInteger(id)) : [];
       if (!chatId || !ids.length) {
         if (ack) ack({ error: 'Немає що видаляти' });
@@ -626,24 +635,49 @@ io.on('connection', (socket) => {
         return;
       }
       const placeholders = ids.map(() => '?').join(',');
-      // Видаляти можна лише власні повідомлення
-      const ownMessages = db.prepare(
-        `SELECT id FROM messages WHERE chat_id = ? AND sender_id = ? AND id IN (${placeholders})`
-      ).all(chatId, socket.user.id, ...ids);
-      const deletableIds = ownMessages.map((m) => m.id);
-      if (!deletableIds.length) {
-        if (ack) ack({ error: 'Можна видаляти лише власні повідомлення' });
+
+      if (scope === 'everyone') {
+        // Видалити для всіх можна лише власні повідомлення — вони видаляються з бази остаточно
+        const ownMessages = db.prepare(
+          `SELECT id FROM messages WHERE chat_id = ? AND sender_id = ? AND id IN (${placeholders})`
+        ).all(chatId, socket.user.id, ...ids);
+        const deletableIds = ownMessages.map((m) => m.id);
+        if (!deletableIds.length) {
+          if (ack) ack({ error: 'Можна видаляти для всіх лише власні повідомлення' });
+          return;
+        }
+        const delPlaceholders = deletableIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM message_deletions WHERE message_id IN (${delPlaceholders})`).run(...deletableIds);
+        db.prepare(`DELETE FROM messages WHERE id IN (${delPlaceholders})`).run(...deletableIds);
+
+        const otherId = otherUserId(chat, socket.user.id);
+        const payloadOut = { chatId, messageIds: deletableIds, scope: 'everyone' };
+        io.to(`user:${socket.user.id}`).emit('message:deleted', payloadOut);
+        io.to(`user:${otherId}`).emit('message:deleted', payloadOut);
+
+        if (ack) ack({ ok: true, deletedIds: deletableIds, scope: 'everyone' });
         return;
       }
-      const delPlaceholders = deletableIds.map(() => '?').join(',');
-      db.prepare(`DELETE FROM messages WHERE id IN (${delPlaceholders})`).run(...deletableIds);
 
-      const otherId = otherUserId(chat, socket.user.id);
-      const payloadOut = { chatId, messageIds: deletableIds };
-      io.to(`user:${socket.user.id}`).emit('message:deleted', payloadOut);
-      io.to(`user:${otherId}`).emit('message:deleted', payloadOut);
+      // scope === 'me' (за замовчуванням) — ховаємо повідомлення лише для того, хто видаляє;
+      // будь-хто (і власні, і чужі повідомлення в чаті) може видалити зі свого перегляду
+      const ownedInChat = db.prepare(
+        `SELECT id FROM messages WHERE chat_id = ? AND id IN (${placeholders})`
+      ).all(chatId, ...ids);
+      const visibleIds = ownedInChat.map((m) => m.id);
+      if (!visibleIds.length) {
+        if (ack) ack({ error: 'Повідомлення не знайдено' });
+        return;
+      }
+      const insertDeletion = db.prepare(
+        'INSERT OR IGNORE INTO message_deletions (message_id, user_id) VALUES (?, ?)'
+      );
+      visibleIds.forEach((id) => insertDeletion.run(id, socket.user.id));
 
-      if (ack) ack({ ok: true, deletedIds: deletableIds });
+      // Синхронізуємо інші вкладки/пристрої того ж користувача; співрозмовника не чіпаємо
+      io.to(`user:${socket.user.id}`).emit('message:deleted', { chatId, messageIds: visibleIds, scope: 'me' });
+
+      if (ack) ack({ ok: true, deletedIds: visibleIds, scope: 'me' });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

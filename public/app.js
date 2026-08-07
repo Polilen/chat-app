@@ -898,18 +898,16 @@
     });
     actionsRow.appendChild(forwardBtn);
 
-    if (info.mine) {
-      const deleteBtn = document.createElement('button');
-      deleteBtn.type = 'button';
-      deleteBtn.className = 'context-menu-item danger';
-      deleteBtn.innerHTML = '<span>🗑</span> Видалити';
-      deleteBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        closeMessageMenu();
-        deleteMessages([info.messageId]);
-      });
-      actionsRow.appendChild(deleteBtn);
-    }
+    const deleteBtn = document.createElement('button');
+    deleteBtn.type = 'button';
+    deleteBtn.className = 'context-menu-item danger';
+    deleteBtn.innerHTML = '<span>🗑</span> Видалити';
+    deleteBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeMessageMenu();
+      openDeleteChoiceModal([info.messageId], info.mine);
+    });
+    actionsRow.appendChild(deleteBtn);
 
     reactionPopover.appendChild(actionsRow);
 
@@ -1208,11 +1206,7 @@
   function updateSelectionBar() {
     const count = state.selectedIds.size;
     selectionCount.textContent = `${count} обрано`;
-    const allMine = count > 0 && [...state.selectedIds].every((id) => {
-      const node = messagesEl.querySelector(`[data-id="${id}"]`);
-      return node && String(node.dataset.senderId) === String(state.user.id);
-    });
-    selectionDeleteBtn.disabled = !allMine;
+    selectionDeleteBtn.disabled = count === 0;
     selectionForwardBtn.disabled = count === 0;
   }
 
@@ -1240,14 +1234,17 @@
 
   selectionDeleteBtn.addEventListener('click', () => {
     if (!state.selectedIds.size || selectionDeleteBtn.disabled) return;
-    if (!confirm(`Видалити ${state.selectedIds.size} повідомлень?`)) return;
-    deleteMessages([...state.selectedIds]);
-    exitSelectMode();
+    const ids = [...state.selectedIds];
+    const allMine = ids.every((id) => {
+      const node = messagesEl.querySelector(`[data-id="${id}"]`);
+      return node && String(node.dataset.senderId) === String(state.user.id);
+    });
+    openDeleteChoiceModal(ids, allMine, () => exitSelectMode());
   });
 
-  function deleteMessages(ids) {
+  function deleteMessages(ids, scope) {
     if (!state.activeChatId || !ids.length) return;
-    state.socket.emit('message:delete', { chatId: state.activeChatId, messageIds: ids }, (ack) => {
+    state.socket.emit('message:delete', { chatId: state.activeChatId, messageIds: ids, scope }, (ack) => {
       if (ack && ack.error) {
         alert(ack.error);
         return;
@@ -1259,6 +1256,43 @@
       loadChats();
     });
   }
+
+  // ---------- Вибір способу видалення (для мене / для всіх) ----------
+
+  const deleteChoiceModal = el('deleteChoiceModal');
+  const deleteForMeBtn = el('deleteForMeBtn');
+  const deleteForEveryoneBtn = el('deleteForEveryoneBtn');
+  let pendingDeleteIds = [];
+  let pendingDeleteCallback = null;
+
+  function openDeleteChoiceModal(ids, canDeleteForEveryone, onDone) {
+    pendingDeleteIds = ids;
+    pendingDeleteCallback = onDone || null;
+    deleteForEveryoneBtn.classList.toggle('hidden', !canDeleteForEveryone);
+    deleteChoiceModal.classList.remove('hidden');
+  }
+
+  function closeDeleteChoiceModal() {
+    deleteChoiceModal.classList.add('hidden');
+    pendingDeleteIds = [];
+    pendingDeleteCallback = null;
+  }
+
+  deleteForMeBtn.addEventListener('click', () => {
+    const ids = pendingDeleteIds;
+    const cb = pendingDeleteCallback;
+    closeDeleteChoiceModal();
+    deleteMessages(ids, 'me');
+    if (cb) cb();
+  });
+
+  deleteForEveryoneBtn.addEventListener('click', () => {
+    const ids = pendingDeleteIds;
+    const cb = pendingDeleteCallback;
+    closeDeleteChoiceModal();
+    deleteMessages(ids, 'everyone');
+    if (cb) cb();
+  });
 
   // ---------- Модалка перегляду фото/відео ----------
 
@@ -1363,10 +1397,12 @@
   document.querySelectorAll('[data-close="image"]').forEach((btn) => btn.addEventListener('click', closeImageModal));
   document.querySelectorAll('[data-close="forward"]').forEach((btn) => btn.addEventListener('click', closeForwardModal));
   document.querySelectorAll('[data-close="settings"]').forEach((btn) => btn.addEventListener('click', closeSettingsModal));
+  document.querySelectorAll('[data-close="deleteChoice"]').forEach((btn) => btn.addEventListener('click', closeDeleteChoiceModal));
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
+    if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
+    else if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
     else if (!forwardModal.classList.contains('hidden')) closeForwardModal();
     else if (!imageModal.classList.contains('hidden')) closeImageModal();
   });

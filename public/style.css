@@ -1240,6 +1240,20 @@ body {
 }
 .settings-actions .modal-action-btn { width: 100%; justify-content: center; }
 
+.delete-choice-content { width: min(300px, 92vw); }
+
+.delete-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+}
+
+.delete-choice-btn {
+  width: 100%;
+  justify-content: center;
+}
+
 .settings-toggle-row {
   display: flex;
   align-items: center;

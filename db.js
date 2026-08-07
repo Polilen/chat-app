@@ -57,6 +57,19 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_reactions_message ON reactions(message_id);
+
+  CREATE TABLE IF NOT EXISTS message_deletions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(message_id, user_id),
+    FOREIGN KEY(message_id) REFERENCES messages(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_deletions_message ON message_deletions(message_id);
+  CREATE INDEX IF NOT EXISTS idx_deletions_user ON message_deletions(user_id);
 `);
 
 // Міграція для баз, створених до появи картинок/аудіо у чаті

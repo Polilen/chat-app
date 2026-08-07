@@ -187,6 +187,21 @@
     </div>
   </div>
 
+  <!-- Вибір способу видалення повідомлень -->
+  <div id="deleteChoiceModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="deleteChoice"></div>
+    <div class="forward-modal-content delete-choice-content">
+      <div class="forward-modal-header">
+        <span>Видалити повідомлення</span>
+        <button id="deleteChoiceModalClose" class="icon-btn" data-close="deleteChoice">✕</button>
+      </div>
+      <div class="delete-choice-body">
+        <button type="button" id="deleteForMeBtn" class="modal-action-btn delete-choice-btn">Видалити для мене</button>
+        <button type="button" id="deleteForEveryoneBtn" class="modal-action-btn delete-choice-btn danger">Видалити для всіх</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Реакції на повідомлення (правий клік) -->
   <div id="reactionPopover" class="reaction-popover hidden"></div>
 

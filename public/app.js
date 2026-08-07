@@ -770,7 +770,8 @@
 
     let inner = '<div class="msg-checkbox"></div>';
     if (showSenderName) {
-      inner += `<span class="msg-sender-name">${escapeHtml(senderUsername)}</span>`;
+      inner += '<div class="msg-sender-row"><div class="msg-sender-avatar"></div>'
+        + `<span class="msg-sender-name">${escapeHtml(senderUsername)}</span></div>`;
     }
     if (imageUrl) {
       inner += `<img class="msg-image" src="${escapeAttr(imageUrl)}" alt="Фото">`;
@@ -794,6 +795,11 @@
     inner += '<div class="msg-reactions"></div>';
 
     div.innerHTML = inner;
+
+    if (showSenderName) {
+      const senderAvatarUrl = msg.senderAvatarUrl || msg.sender_avatar_url;
+      renderAvatarInto(div.querySelector('.msg-sender-avatar'), senderUsername, senderAvatarUrl);
+    }
 
     if (imageUrl) {
       div.querySelector('.msg-image').addEventListener('click', (e) => {
@@ -943,6 +949,8 @@
     closeMessageMenu();
     contextMenuTargetDiv = msgDiv;
     msgDiv.classList.add('context-active');
+    lastMenuX = x;
+    lastMenuY = y;
 
     reactionPopover.innerHTML = '';
 
@@ -1027,6 +1035,9 @@
     reactionPopover.classList.add('animate-in');
   }
 
+  let lastMenuX = 0;
+  let lastMenuY = 0;
+
   function positionPopoverNear(popoverEl, x, y) {
     const rect = popoverEl.getBoundingClientRect();
     let left = x - rect.width / 2;
@@ -1045,6 +1056,7 @@
       box.className = 'context-menu-read-receipts';
       box.textContent = 'Завантаження…';
       reactionPopover.insertBefore(box, anchorBtn.closest('.context-menu-actions'));
+      positionPopoverNear(reactionPopover, lastMenuX, lastMenuY);
     }
     try {
       const { reads } = await api(`/api/messages/${messageId}/reads`);
@@ -1061,6 +1073,9 @@
       }
     } catch (err) {
       box.textContent = 'Не вдалося завантажити';
+    } finally {
+      // Контент міг змінити розмір попапа — перепозиціонуємо, щоб точно не вилазив за екран
+      positionPopoverNear(reactionPopover, lastMenuX, lastMenuY);
     }
   }
 

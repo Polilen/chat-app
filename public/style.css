@@ -803,6 +803,7 @@ body {
   align-self: flex-end;
   background: var(--bubble-mine);
   border-bottom-right-radius: 4px;
+  margin-right: 10px;
 }
 
 .msg.theirs {
@@ -811,12 +812,24 @@ body {
   border-bottom-left-radius: 4px;
 }
 
+.msg-sender-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.msg-sender-avatar {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.msg-sender-avatar .avatar-fallback { font-size: 9px; }
+
 .msg-sender-name {
-  display: block;
   font-size: 12px;
   font-weight: 700;
   color: var(--accent);
-  margin-bottom: 3px;
 }
 
 .msg.context-active {

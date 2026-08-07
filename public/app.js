@@ -806,7 +806,6 @@
     btn.addEventListener('click', () => {
       if (!state.activeChatId) return;
       insertTextAtCursor(el('messageInput'), s);
-      stickerPopover.classList.add('hidden');
     });
     stickerPopover.appendChild(btn);
   });
@@ -1276,6 +1275,7 @@
     const input = el('messageInput');
     const text = input.value.trim();
     if ((!text && !pendingImageFile && !pendingAudioFile && !pendingVideoFile) || !state.activeChatId) return;
+    stickerPopover.classList.add('hidden');
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;

@@ -805,13 +805,20 @@
     btn.textContent = s;
     btn.addEventListener('click', () => {
       if (!state.activeChatId) return;
-      state.socket.emit('message:send', { chatId: state.activeChatId, text: s }, (ack) => {
-        if (ack && ack.error) console.error(ack.error);
-      });
+      insertTextAtCursor(el('messageInput'), s);
       stickerPopover.classList.add('hidden');
     });
     stickerPopover.appendChild(btn);
   });
+
+  function insertTextAtCursor(input, text) {
+    const start = input.selectionStart ?? input.value.length;
+    const end = input.selectionEnd ?? input.value.length;
+    input.value = input.value.slice(0, start) + text + input.value.slice(end);
+    const cursor = start + text.length;
+    input.focus();
+    input.setSelectionRange(cursor, cursor);
+  }
 
   stickerBtn.addEventListener('click', (e) => {
     e.stopPropagation();

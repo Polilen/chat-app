@@ -140,12 +140,21 @@
     state.socket.emit('messages:read', { chatId: state.activeChatId });
   }
 
+  function sendPresenceUpdate() {
+    if (!state.socket || !state.socket.connected) return;
+    state.socket.emit('presence:update', { visible: isPageVisible() });
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (isPageVisible()) markActiveChatReadIfVisible();
+    sendPresenceUpdate();
   });
 
   function connectSocket() {
     state.socket = io({ auth: { token: state.token } });
+    state.socket.on('connect', () => {
+      sendPresenceUpdate();
+    });
     state.socket.on('message:new', (msg) => {
       // Оновлюємо список чатів (щоб з'явився новий/піднявся вгору)
       loadChats();
@@ -192,6 +201,21 @@
       if (state.activeChatWith && state.activeChatWith.id === userId) {
         state.activeChatWith.avatarUrl = avatarUrl;
         renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
+      }
+    });
+    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, hidden }) => {
+      const presence = { online, lastSeenAt, hidden };
+      let changed = false;
+      state.chats.forEach((chat) => {
+        if (chat.withUser.id === userId) {
+          chat.withUser.presence = presence;
+          changed = true;
+        }
+      });
+      if (changed) renderChatList();
+      if (state.activeChatWith && state.activeChatWith.id === userId) {
+        state.activeChatWith.presence = presence;
+        renderChatHeaderStatus(presence);
       }
     });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
@@ -241,6 +265,11 @@
         </div>
       `;
       renderAvatarInto(item.querySelector('.avatar-slot'), chat.withUser.username, chat.withUser.avatarUrl);
+      if (chat.withUser.presence && chat.withUser.presence.online) {
+        const dot = document.createElement('div');
+        dot.className = 'avatar-online-dot';
+        item.querySelector('.avatar-slot').appendChild(dot);
+      }
       item.addEventListener('click', () => openChat(chat.chatId, chat.withUser));
       list.appendChild(item);
     });
@@ -579,6 +608,7 @@
     activeChatEl.classList.remove('hidden');
     el('chatWithUsername').textContent = withUser.username;
     renderAvatarInto(el('chatHeaderAvatar'), withUser.username, withUser.avatarUrl);
+    renderChatHeaderStatus(withUser.presence);
     renderChatList();
 
     try {
@@ -1180,13 +1210,33 @@
   const avatarInput = el('avatarInput');
   const changeAvatarBtn = el('changeAvatarBtn');
   const removeAvatarBtn = el('removeAvatarBtn');
+  const showLastSeenToggle = el('showLastSeenToggle');
 
   function openSettingsModal() {
     settingsStatus.classList.add('hidden');
     settingsUsername.textContent = state.user.username;
     renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
+    showLastSeenToggle.checked = state.user.showLastSeen !== false;
     settingsModal.classList.remove('hidden');
   }
+
+  showLastSeenToggle.addEventListener('change', async () => {
+    const value = showLastSeenToggle.checked;
+    try {
+      const res = await fetch('/api/me/privacy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + state.token },
+        body: JSON.stringify({ showLastSeen: value }),
+      });
+      if (!res.ok) throw new Error('Не вдалося зберегти налаштування');
+      state.user.showLastSeen = value;
+      localStorage.setItem('user', JSON.stringify(state.user));
+      showSettingsStatus(value ? 'Активність видима іншим' : 'Активність прихована від інших');
+    } catch (err) {
+      showLastSeenToggle.checked = !value;
+      showSettingsStatus(err.message);
+    }
+  });
 
   function closeSettingsModal() {
     settingsModal.classList.add('hidden');
@@ -1333,6 +1383,56 @@
     if (!iso) return '';
     const d = new Date(iso.includes('Z') || iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
     return d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function parseServerDate(iso) {
+    if (!iso) return null;
+    return new Date(iso.includes('Z') || iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
+  }
+
+  // ---------- Присутність (онлайн / був(ла) недавно) ----------
+
+  function formatPresence(presence) {
+    if (!presence || presence.hidden) return null;
+    if (presence.online) return { text: 'у мережі', online: true };
+    if (!presence.lastSeenAt) return null;
+
+    const seenDate = parseServerDate(presence.lastSeenAt);
+    if (!seenDate) return null;
+    const now = new Date();
+    const diffMs = now - seenDate;
+    const diffMin = diffMs / 60000;
+
+    if (diffMin < 3) {
+      return { text: 'був(ла) недавно', online: false };
+    }
+
+    const time = seenDate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+    const isSameDay = seenDate.toDateString() === now.toDateString();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = seenDate.toDateString() === yesterday.toDateString();
+
+    if (isSameDay) {
+      return { text: `був(ла) сьогодні о ${time}`, online: false };
+    }
+    if (isYesterday) {
+      return { text: `був(ла) вчора о ${time}`, online: false };
+    }
+    const dateStr = seenDate.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return { text: `був(ла) ${dateStr} о ${time}`, online: false };
+  }
+
+  function renderChatHeaderStatus(presence) {
+    const el2 = el('chatHeaderStatus');
+    const formatted = formatPresence(presence);
+    if (!formatted) {
+      el2.textContent = '';
+      el2.classList.remove('online');
+      return;
+    }
+    el2.textContent = formatted.text;
+    el2.classList.toggle('online', formatted.online);
   }
 
   // ---------- Init ----------

@@ -14,6 +14,8 @@ db.exec(`
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     avatar_url TEXT,
+    last_seen_at TEXT,
+    show_last_seen INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
@@ -76,6 +78,12 @@ if (!messageColumns.includes('read_at')) {
 const userColumns = db.prepare('PRAGMA table_info(users)').all().map((c) => c.name);
 if (!userColumns.includes('avatar_url')) {
   db.exec('ALTER TABLE users ADD COLUMN avatar_url TEXT');
+}
+if (!userColumns.includes('last_seen_at')) {
+  db.exec('ALTER TABLE users ADD COLUMN last_seen_at TEXT');
+}
+if (!userColumns.includes('show_last_seen')) {
+  db.exec('ALTER TABLE users ADD COLUMN show_last_seen INTEGER NOT NULL DEFAULT 1');
 }
 
 module.exports = db;

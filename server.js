@@ -120,6 +120,33 @@ function groupReactions(rows) {
   return Object.entries(byEmoji).map(([emoji, userIds]) => ({ emoji, userIds }));
 }
 
+// ---------- Присутність (онлайн / був(ла) нещодавно) ----------
+// userId -> Set(socketId), лише сокети з реально видимою (не згорнутою/неактивною) вкладкою
+const visibleSocketsByUser = new Map();
+
+function isUserOnline(userId) {
+  const set = visibleSocketsByUser.get(userId);
+  return !!set && set.size > 0;
+}
+
+function getPresence(userId) {
+  const row = db.prepare('SELECT last_seen_at as lastSeenAt, show_last_seen as showLastSeen FROM users WHERE id = ?').get(userId);
+  if (!row) return { online: false, lastSeenAt: null, hidden: false };
+  if (!row.showLastSeen) return { online: false, lastSeenAt: null, hidden: true };
+  return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, hidden: false };
+}
+
+function notifyChatPartnersPresence(userId) {
+  const presence = getPresence(userId);
+  const partners = db.prepare(`
+    SELECT DISTINCT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
+    FROM chats WHERE user1_id = ? OR user2_id = ?
+  `).all(userId, userId, userId);
+  partners.forEach((p) => {
+    io.to(`user:${p.otherId}`).emit('presence:updated', { userId, ...presence });
+  });
+}
+
 function notifyChatPartnersAvatarChanged(userId, avatarUrl) {
   const partners = db.prepare(`
     SELECT DISTINCT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
@@ -150,7 +177,7 @@ app.post('/api/register', (req, res) => {
   }
   const hash = bcrypt.hashSync(password, 10);
   const info = db.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?)').run(cleanUsername, hash);
-  const user = { id: info.lastInsertRowid, username: cleanUsername, avatarUrl: null };
+  const user = { id: info.lastInsertRowid, username: cleanUsername, avatarUrl: null, showLastSeen: true };
   res.json({ token: createToken(user), user });
 });
 
@@ -164,13 +191,23 @@ app.post('/api/login', (req, res) => {
   if (!user || !bcrypt.compareSync(password, user.password_hash)) {
     return res.status(401).json({ error: 'Невірний юзернейм або пароль' });
   }
-  res.json({ token: createToken(user), user: { id: user.id, username: user.username, avatarUrl: user.avatar_url } });
+  res.json({ token: createToken(user), user: { id: user.id, username: user.username, avatarUrl: user.avatar_url, showLastSeen: !!user.show_last_seen } });
 });
 
 app.get('/api/me', authMiddleware, (req, res) => {
-  const user = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare(
+    'SELECT id, username, avatar_url as avatarUrl, show_last_seen as showLastSeen FROM users WHERE id = ?'
+  ).get(req.user.id);
   if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
+  user.showLastSeen = !!user.showLastSeen;
   res.json({ user });
+});
+
+app.post('/api/me/privacy', authMiddleware, (req, res) => {
+  const { showLastSeen } = req.body || {};
+  db.prepare('UPDATE users SET show_last_seen = ? WHERE id = ?').run(showLastSeen ? 1 : 0, req.user.id);
+  notifyChatPartnersPresence(req.user.id);
+  res.json({ ok: true, showLastSeen: !!showLastSeen });
 });
 
 app.post('/api/me/avatar', authMiddleware, (req, res) => {
@@ -239,6 +276,7 @@ app.get('/api/search', authMiddleware, (req, res) => {
   const users = db.prepare(
     'SELECT id, username, avatar_url as avatarUrl FROM users WHERE username LIKE ? AND id != ? LIMIT 20'
   ).all(`%${q}%`, req.user.id);
+  users.forEach((u) => { u.presence = getPresence(u.id); });
   res.json({ users });
 });
 
@@ -250,7 +288,12 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
   if (!target) return res.status(404).json({ error: 'Користувача не знайдено' });
   if (target.id === req.user.id) return res.status(400).json({ error: 'Не можна писати самому собі' });
   const chat = getOrCreateChat(req.user.id, target.id);
-  res.json({ chat: { id: chat.id, withUser: { id: target.id, username: target.username, avatarUrl: target.avatar_url } } });
+  res.json({
+    chat: {
+      id: chat.id,
+      withUser: { id: target.id, username: target.username, avatarUrl: target.avatar_url, presence: getPresence(target.id) },
+    },
+  });
 });
 
 app.get('/api/chats', authMiddleware, (req, res) => {
@@ -263,6 +306,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
 
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
+    if (other) other.presence = getPresence(other.id);
     const lastMsg = db.prepare(
       'SELECT text, image_url, audio_url, video_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
@@ -323,6 +367,41 @@ io.use((socket, next) => {
 io.on('connection', (socket) => {
   const room = `user:${socket.user.id}`;
   socket.join(room);
+
+  socket.on('presence:update', (payload) => {
+    const uid = socket.user.id;
+    let set = visibleSocketsByUser.get(uid);
+    if (!set) {
+      set = new Set();
+      visibleSocketsByUser.set(uid, set);
+    }
+    const wasOnline = set.size > 0;
+    if (payload && payload.visible) {
+      set.add(socket.id);
+    } else {
+      set.delete(socket.id);
+    }
+    const nowOnline = set.size > 0;
+    if (wasOnline !== nowOnline) {
+      if (!nowOnline) {
+        db.prepare("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?").run(uid);
+      }
+      notifyChatPartnersPresence(uid);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    const uid = socket.user.id;
+    const set = visibleSocketsByUser.get(uid);
+    if (!set) return;
+    const wasOnline = set.size > 0;
+    set.delete(socket.id);
+    const nowOnline = set.size > 0;
+    if (wasOnline && !nowOnline) {
+      db.prepare("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?").run(uid);
+      notifyChatPartnersPresence(uid);
+    }
+  });
 
   socket.on('message:send', (payload, ack) => {
     try {

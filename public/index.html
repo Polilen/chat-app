@@ -64,7 +64,10 @@
         <header class="chat-header">
           <div class="chat-header-info">
             <div id="chatHeaderAvatar" class="avatar-slot"></div>
-            <span id="chatWithUsername"></span>
+            <div class="chat-header-texts">
+              <span id="chatWithUsername"></span>
+              <span id="chatHeaderStatus" class="chat-header-status"></span>
+            </div>
           </div>
           <div class="chat-header-actions">
             <div class="volume-control">
@@ -169,6 +172,10 @@
           <button type="button" id="changeAvatarBtn" class="modal-action-btn">🖼 Змінити аватарку</button>
           <button type="button" id="removeAvatarBtn" class="modal-action-btn danger">Видалити аватарку</button>
         </div>
+        <label class="settings-toggle-row">
+          <span>Показувати мою активність (був(ла) у мережі)</span>
+          <input type="checkbox" id="showLastSeenToggle" checked>
+        </label>
         <p id="settingsStatus" class="forward-status hidden" style="border:none"></p>
       </div>
     </div>

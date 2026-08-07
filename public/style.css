@@ -337,6 +337,20 @@ body {
 }
 #chatWithUsername::before { content: "@"; color: var(--text-dim); }
 
+.chat-header-texts {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+
+.chat-header-status {
+  font-size: 11.5px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+.chat-header-status.online { color: var(--accent); }
+
 .chat-header-actions {
   display: flex;
   align-items: center;
@@ -1045,3 +1059,34 @@ body {
   margin-top: 6px;
 }
 .settings-actions .modal-action-btn { width: 100%; justify-content: center; }
+
+.settings-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  cursor: pointer;
+  margin-top: 4px;
+}
+.settings-toggle-row input[type="checkbox"] {
+  width: 34px;
+  height: 20px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.avatar-slot { position: relative; }
+.avatar-online-dot {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--bg-panel);
+}

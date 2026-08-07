@@ -1474,6 +1474,129 @@ body {
 .avatar-history-item:hover { border-color: var(--accent); transform: scale(1.05); }
 .avatar-history-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+/* ---------- Панель профілю (виїжджає справа, як у Telegram) ---------- */
+
+.profile-panel {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.profile-panel-content {
+  position: relative;
+  z-index: 1;
+  width: min(380px, 100vw);
+  height: 100%;
+  background: var(--bg-panel);
+  box-shadow: -12px 0 40px rgba(0,0,0,0.5);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transform: translateX(100%);
+  transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.profile-panel:not(.hidden) .profile-panel-content { transform: translateX(0); }
+
+.profile-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 700;
+  font-size: 15px;
+  flex-shrink: 0;
+}
+
+.profile-photo-viewer {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.profile-photo-wrap {
+  width: 100%;
+  height: 100%;
+}
+
+.profile-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.profile-photo-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 96px;
+  font-weight: 700;
+  color: #fff;
+  text-transform: uppercase;
+}
+
+.profile-photo-dots {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  z-index: 3;
+  display: flex;
+  gap: 4px;
+}
+
+.profile-photo-dot {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: rgba(255,255,255,0.35);
+  overflow: hidden;
+}
+.profile-photo-dot.active { background: #fff; }
+
+.profile-photo-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 3;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0,0,0,0.35);
+  color: #fff;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.profile-photo-nav:hover { background: rgba(0,0,0,0.55); }
+.profile-photo-nav.prev { left: 10px; }
+.profile-photo-nav.next { right: 10px; }
+
+.profile-panel-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.profile-username {
+  font-size: 18px;
+  font-weight: 700;
+}
+.profile-username::before { content: "@"; color: var(--text-dim); }
+
 .delete-choice-content { width: min(300px, 92vw); }
 
 .delete-choice-body {

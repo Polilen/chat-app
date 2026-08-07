@@ -267,20 +267,24 @@
   </div>
 
   <!-- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) -->
-  <div id="userProfileModal" class="forward-modal hidden">
+  <div id="userProfileModal" class="profile-panel hidden">
     <div class="modal-backdrop" data-close="userProfile"></div>
-    <div class="forward-modal-content settings-modal-content">
-      <div class="forward-modal-header">
-        <span>Профіль</span>
+    <div class="profile-panel-content">
+      <div class="profile-panel-header">
         <button id="userProfileModalClose" class="icon-btn" data-close="userProfile">✕</button>
+        <span>Профіль</span>
       </div>
-      <div class="settings-body">
-        <div id="userProfileAvatar" class="avatar-slot avatar-slot-large"></div>
-        <div id="userProfileUsername" class="settings-username"></div>
-        <div id="userProfileHistorySection" class="avatar-history-section hidden">
-          <span class="avatar-history-label">Історія аватарок</span>
-          <div id="userProfileHistoryGrid" class="avatar-history-grid"></div>
+      <div class="profile-photo-viewer">
+        <div id="userProfileDots" class="profile-photo-dots"></div>
+        <div id="userProfilePhotoWrap" class="profile-photo-wrap">
+          <img id="userProfilePhoto" class="profile-photo hidden" alt="">
+          <div id="userProfilePhotoFallback" class="profile-photo-fallback hidden"></div>
         </div>
+        <button type="button" id="userProfilePrevBtn" class="profile-photo-nav prev hidden">‹</button>
+        <button type="button" id="userProfileNextBtn" class="profile-photo-nav next hidden">›</button>
+      </div>
+      <div class="profile-panel-body">
+        <div id="userProfileUsername" class="profile-username"></div>
         <p id="userProfileStatus" class="forward-status hidden" style="border:none"></p>
       </div>
     </div>

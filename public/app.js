@@ -1816,28 +1816,76 @@
   // ---------- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) ----------
 
   const userProfileModal = el('userProfileModal');
-  const userProfileAvatar = el('userProfileAvatar');
+  const userProfilePhoto = el('userProfilePhoto');
+  const userProfilePhotoFallback = el('userProfilePhotoFallback');
+  const userProfileDots = el('userProfileDots');
+  const userProfilePrevBtn = el('userProfilePrevBtn');
+  const userProfileNextBtn = el('userProfileNextBtn');
   const userProfileUsername = el('userProfileUsername');
-  const userProfileHistorySection = el('userProfileHistorySection');
-  const userProfileHistoryGrid = el('userProfileHistoryGrid');
   const userProfileStatus = el('userProfileStatus');
+
+  let profilePhotos = [];
+  let profilePhotoIndex = 0;
+  let profileUsernameForFallback = '?';
 
   async function openUserProfileModal(userId) {
     userProfileStatus.classList.add('hidden');
-    userProfileHistorySection.classList.add('hidden');
-    userProfileAvatar.innerHTML = '';
     userProfileUsername.textContent = '';
+    profilePhotos = [];
+    profilePhotoIndex = 0;
+    renderProfilePhoto();
     userProfileModal.classList.remove('hidden');
     try {
       const { user } = await api(`/api/users/${userId}`);
-      renderAvatarInto(userProfileAvatar, user.username, user.avatarUrl);
       userProfileUsername.textContent = user.username;
-      renderAvatarHistoryGrid(userProfileHistoryGrid, userProfileHistorySection, user.avatarHistory);
+      profileUsernameForFallback = user.username;
+      profilePhotos = (user.avatarHistory && user.avatarHistory.length)
+        ? user.avatarHistory
+        : (user.avatarUrl ? [{ avatarUrl: user.avatarUrl }] : []);
+      profilePhotoIndex = 0;
+      renderProfilePhoto();
     } catch (err) {
       userProfileStatus.textContent = err.message;
       userProfileStatus.classList.remove('hidden');
     }
   }
+
+  function renderProfilePhoto() {
+    const total = profilePhotos.length;
+
+    userProfileDots.innerHTML = '';
+    if (total > 1) {
+      for (let i = 0; i < total; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'profile-photo-dot' + (i === profilePhotoIndex ? ' active' : '');
+        userProfileDots.appendChild(dot);
+      }
+    }
+    userProfilePrevBtn.classList.toggle('hidden', total <= 1);
+    userProfileNextBtn.classList.toggle('hidden', total <= 1);
+
+    if (total === 0) {
+      userProfilePhoto.classList.add('hidden');
+      userProfilePhotoFallback.classList.remove('hidden');
+      userProfilePhotoFallback.style.background = colorForUsername(profileUsernameForFallback);
+      userProfilePhotoFallback.textContent = (profileUsernameForFallback || '?').charAt(0);
+    } else {
+      userProfilePhotoFallback.classList.add('hidden');
+      userProfilePhoto.classList.remove('hidden');
+      userProfilePhoto.src = profilePhotos[profilePhotoIndex].avatarUrl;
+    }
+  }
+
+  userProfilePrevBtn.addEventListener('click', () => {
+    if (!profilePhotos.length) return;
+    profilePhotoIndex = (profilePhotoIndex - 1 + profilePhotos.length) % profilePhotos.length;
+    renderProfilePhoto();
+  });
+  userProfileNextBtn.addEventListener('click', () => {
+    if (!profilePhotos.length) return;
+    profilePhotoIndex = (profilePhotoIndex + 1) % profilePhotos.length;
+    renderProfilePhoto();
+  });
 
   function closeUserProfileModal() {
     userProfileModal.classList.add('hidden');

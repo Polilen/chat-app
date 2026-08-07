@@ -708,6 +708,12 @@
     sendChatActiveUpdate();
     renderChatList();
 
+    // Якщо панель профілю зараз відкрита — оновлюємо її на нового співрозмовника (для груп просто закриваємо)
+    if (appScreen.classList.contains('profile-open')) {
+      if (entry.isGroup) closeUserProfileModal();
+      else if (entry.withUser) openUserProfileModal(entry.withUser.id);
+    }
+
     // Плавний перехід: приховуємо старий вміст, показуємо новий уже після завантаження
     messagesEl.classList.add('chat-switching');
 
@@ -1794,6 +1800,27 @@
       img.alt = '';
       item.appendChild(img);
       item.addEventListener('click', () => openMediaModal(h.avatarUrl, 'image'));
+
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'avatar-history-delete-btn';
+      deleteBtn.textContent = '✕';
+      deleteBtn.title = 'Видалити цю аватарку';
+      deleteBtn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!confirm('Видалити цю аватарку назавжди?')) return;
+        try {
+          const data = await api(`/api/me/avatar-history/${h.id}`, { method: 'DELETE' });
+          state.user.avatarUrl = data.avatarUrl;
+          persistUser();
+          const me = await api('/api/me');
+          renderAvatarHistoryGrid(settingsHistoryGrid, settingsHistorySection, me.user.avatarHistory);
+        } catch (err) {
+          showSettingsStatus(err.message);
+        }
+      });
+      item.appendChild(deleteBtn);
+
       gridEl.appendChild(item);
     });
   }

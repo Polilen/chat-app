@@ -283,9 +283,32 @@ app.get('/api/me', authMiddleware, (req, res) => {
   if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
   user.showLastSeen = !!user.showLastSeen;
   user.avatarHistory = db.prepare(
-    'SELECT avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
+    'SELECT id, avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
   ).all(req.user.id);
   res.json({ user });
+});
+
+app.delete('/api/me/avatar-history/:id', authMiddleware, (req, res) => {
+  const historyId = Number(req.params.id);
+  const row = db.prepare('SELECT * FROM avatar_history WHERE id = ? AND user_id = ?').get(historyId, req.user.id);
+  if (!row) return res.status(404).json({ error: 'Аватарку не знайдено' });
+
+  db.prepare('DELETE FROM avatar_history WHERE id = ?').run(historyId);
+  fs.unlink(path.join(UPLOAD_DIR, path.basename(row.avatar_url)), () => {});
+
+  const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+  let newCurrentAvatarUrl = user.avatar_url;
+  if (user.avatar_url === row.avatar_url) {
+    // Видалили саме поточну аватарку — переключаємось на найновішу з тих, що лишились, або знімаємо зовсім
+    const latest = db.prepare(
+      'SELECT avatar_url FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+    ).get(req.user.id);
+    newCurrentAvatarUrl = latest ? latest.avatar_url : null;
+    db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(newCurrentAvatarUrl, req.user.id);
+    notifyChatPartnersAvatarChanged(req.user.id, newCurrentAvatarUrl);
+  }
+
+  res.json({ ok: true, avatarUrl: newCurrentAvatarUrl });
 });
 
 app.get('/api/users/:id', authMiddleware, (req, res) => {
@@ -293,7 +316,7 @@ app.get('/api/users/:id', authMiddleware, (req, res) => {
   const user = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(id);
   if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
   user.avatarHistory = db.prepare(
-    'SELECT avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
+    'SELECT id, avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
   ).all(id);
   res.json({ user });
 });

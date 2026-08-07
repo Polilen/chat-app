@@ -6,6 +6,10 @@ const path = require('path');
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'data.db');
 const db = new Database(dbPath);
 
+// Явно вимикаємо перевірку зовнішніх ключів: на деяких платформах (напр. Railway)
+// зібраний better-sqlite3 має foreign_keys=ON за замовчуванням, що ламає міграції
+// нижче на реальних даних. FK тут лише довідкові, ми ніколи не покладались на їх примусову перевірку.
+db.pragma('foreign_keys = OFF');
 db.pragma('journal_mode = WAL');
 
 db.exec(`
@@ -145,25 +149,29 @@ const user1Col = chatsInfo.find((c) => c.name === 'user1_id');
 const hasGroupColumns = chatsInfo.some((c) => c.name === 'is_group');
 
 if (user1Col && (user1Col.notnull === 1 || !hasGroupColumns)) {
-  db.exec(`
-    CREATE TABLE chats_new (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user1_id INTEGER,
-      user2_id INTEGER,
-      is_group INTEGER NOT NULL DEFAULT 0,
-      name TEXT,
-      avatar_url TEXT,
-      creator_id INTEGER,
-      created_at TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY(user1_id) REFERENCES users(id),
-      FOREIGN KEY(user2_id) REFERENCES users(id),
-      FOREIGN KEY(creator_id) REFERENCES users(id)
-    );
-    INSERT INTO chats_new (id, user1_id, user2_id, created_at)
-      SELECT id, user1_id, user2_id, created_at FROM chats;
-    DROP TABLE chats;
-    ALTER TABLE chats_new RENAME TO chats;
-  `);
+  const migrateChatsTable = db.transaction(() => {
+    // DROP TABLE IF EXISTS — на випадок, якщо попередня спроба міграції впала посередині
+    db.exec('DROP TABLE IF EXISTS chats_new;');
+    db.exec(`
+      CREATE TABLE chats_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user1_id INTEGER,
+        user2_id INTEGER,
+        is_group INTEGER NOT NULL DEFAULT 0,
+        name TEXT,
+        avatar_url TEXT,
+        creator_id INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+    `);
+    db.exec(`
+      INSERT INTO chats_new (id, user1_id, user2_id, created_at)
+        SELECT id, user1_id, user2_id, created_at FROM chats;
+    `);
+    db.exec('DROP TABLE chats;');
+    db.exec('ALTER TABLE chats_new RENAME TO chats;');
+  });
+  migrateChatsTable();
 }
 
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_pair ON chats(user1_id, user2_id) WHERE is_group = 0;');

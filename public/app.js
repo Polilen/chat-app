@@ -8,6 +8,7 @@
     socket: null,
     selectionMode: false,
     selectedIds: new Set(),
+    audioVolume: Number(localStorage.getItem('audioVolume') || '1'),
   };
 
   const el = (id) => document.getElementById(id);
@@ -565,6 +566,7 @@
   recordCancelBtn.addEventListener('click', () => stopRecording(true));
 
   async function openChat(chatId, withUser) {
+    pauseAllAudio();
     state.activeChatId = chatId;
     state.activeChatWith = withUser;
     exitSelectMode();
@@ -703,7 +705,15 @@
     messagesEl.appendChild(div);
   }
 
-  // ---------- Кастомний аудіоплеєр з повзунком гучності ----------
+  // ---------- Кастомний аудіоплеєр (один активний одночасно) ----------
+
+  const audioInstances = new Set();
+  let currentlyPlayingAudio = null;
+
+  function pauseAllAudio() {
+    audioInstances.forEach((a) => a.pause());
+    currentlyPlayingAudio = null;
+  }
 
   function buildAudioPlayer(url) {
     const wrap = document.createElement('div');
@@ -711,7 +721,8 @@
 
     const audio = new Audio(url);
     audio.preload = 'metadata';
-    audio.volume = Number(localStorage.getItem('audioVolume') || '1');
+    audio.volume = state.audioVolume;
+    audioInstances.add(audio);
 
     const playBtn = document.createElement('button');
     playBtn.type = 'button';
@@ -736,20 +747,7 @@
     durTimeEl.textContent = '0:00';
     timeRow.append(curTimeEl, durTimeEl);
 
-    const volRow = document.createElement('div');
-    volRow.className = 'audio-volume-row';
-    const volIcon = document.createElement('span');
-    volIcon.className = 'audio-vol-icon';
-    volIcon.textContent = '🔊';
-    const volSlider = document.createElement('input');
-    volSlider.type = 'range';
-    volSlider.className = 'audio-volume';
-    volSlider.min = '0';
-    volSlider.max = '100';
-    volSlider.value = String(Math.round(audio.volume * 100));
-    volRow.append(volIcon, volSlider);
-
-    controls.append(seek, timeRow, volRow);
+    controls.append(seek, timeRow);
 
     const downloadBtn = document.createElement('a');
     downloadBtn.className = 'audio-download-btn';
@@ -767,15 +765,24 @@
       e.stopPropagation();
       if (state.selectionMode) return;
       if (audio.paused) {
-        document.querySelectorAll('audio').forEach((a) => { if (a !== audio) a.pause(); });
+        // Гарантовано зупиняємо будь-яке інше голосове, що зараз грає — лише одне звучить одночасно
+        if (currentlyPlayingAudio && currentlyPlayingAudio !== audio) {
+          currentlyPlayingAudio.pause();
+        }
         audio.play();
       } else {
         audio.pause();
       }
     });
 
-    audio.addEventListener('play', () => { playBtn.textContent = '⏸'; });
-    audio.addEventListener('pause', () => { playBtn.textContent = '▶'; });
+    audio.addEventListener('play', () => {
+      currentlyPlayingAudio = audio;
+      playBtn.textContent = '⏸';
+    });
+    audio.addEventListener('pause', () => {
+      if (currentlyPlayingAudio === audio) currentlyPlayingAudio = null;
+      playBtn.textContent = '▶';
+    });
     audio.addEventListener('ended', () => { playBtn.textContent = '▶'; seek.value = '0'; });
 
     audio.addEventListener('loadedmetadata', () => {
@@ -797,17 +804,35 @@
     });
     seek.addEventListener('click', (e) => e.stopPropagation());
 
-    volSlider.addEventListener('input', (e) => {
-      e.stopPropagation();
-      const v = Number(volSlider.value) / 100;
-      audio.volume = v;
-      localStorage.setItem('audioVolume', String(v));
-      volIcon.textContent = v === 0 ? '🔇' : v < 0.5 ? '🔉' : '🔊';
-    });
-    volSlider.addEventListener('click', (e) => e.stopPropagation());
-
     return wrap;
   }
+
+  // ---------- Загальний регулятор гучності голосових (у шапці чату) ----------
+
+  const volumeBtn = el('volumeBtn');
+  const volumePopover = el('volumePopover');
+  const globalVolumeSlider = el('globalVolumeSlider');
+
+  globalVolumeSlider.value = String(Math.round(state.audioVolume * 100));
+
+  volumeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    volumePopover.classList.toggle('hidden');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!volumePopover.classList.contains('hidden') && !volumePopover.contains(e.target) && e.target !== volumeBtn) {
+      volumePopover.classList.add('hidden');
+    }
+  });
+
+  globalVolumeSlider.addEventListener('input', () => {
+    const v = Number(globalVolumeSlider.value) / 100;
+    state.audioVolume = v;
+    localStorage.setItem('audioVolume', String(v));
+    audioInstances.forEach((a) => { a.volume = v; });
+    volumeBtn.textContent = v === 0 ? '🔇' : v < 0.5 ? '🔉' : '🔊';
+  });
 
   function formatDuration(sec) {
     if (!isFinite(sec) || sec < 0) return '0:00';

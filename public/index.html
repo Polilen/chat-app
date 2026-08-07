@@ -66,7 +66,16 @@
             <div id="chatHeaderAvatar" class="avatar-slot"></div>
             <span id="chatWithUsername"></span>
           </div>
-          <button id="selectModeBtn" class="icon-btn select-mode-btn" title="Виділити повідомлення">☑</button>
+          <div class="chat-header-actions">
+            <div class="volume-control">
+              <button id="volumeBtn" class="icon-btn" title="Гучність голосових повідомлень">🔊</button>
+              <div id="volumePopover" class="volume-popover hidden">
+                <span class="volume-popover-label">Гучність голосових</span>
+                <input type="range" id="globalVolumeSlider" class="audio-volume" min="0" max="100" value="100">
+              </div>
+            </div>
+            <button id="selectModeBtn" class="icon-btn select-mode-btn" title="Виділити повідомлення">☑</button>
+          </div>
         </header>
         <div id="messages" class="messages"></div>
         <div id="selectionBar" class="selection-bar hidden">

@@ -735,18 +735,22 @@
     });
 
     if (messageId != null) {
+      const menuInfo = {
+        messageId,
+        mine,
+        text,
+        imageUrl: imageUrl || null,
+        audioUrl: audioUrl || null,
+        videoUrl: videoUrl || null,
+      };
+
       div.addEventListener('contextmenu', (e) => {
         if (state.selectionMode) return;
         e.preventDefault();
-        openMessageMenu(e.clientX, e.clientY, div, {
-          messageId,
-          mine,
-          text,
-          imageUrl: imageUrl || null,
-          audioUrl: audioUrl || null,
-          videoUrl: videoUrl || null,
-        });
+        openMessageMenu(e.clientX, e.clientY, div, menuInfo);
       });
+
+      attachLongPressMenu(div, menuInfo);
       renderReactions(div, msg.reactions || []);
     }
 
@@ -784,6 +788,52 @@
   }
 
   let contextMenuTargetDiv = null;
+
+  const isTouchDevice = window.matchMedia('(pointer: coarse)').matches || 'ontouchstart' in window;
+
+  function attachLongPressMenu(div, info) {
+    if (!isTouchDevice) return;
+    let timer = null;
+    let startX = 0;
+    let startY = 0;
+    let moved = false;
+    let fired = false;
+
+    div.addEventListener('touchstart', (e) => {
+      if (state.selectionMode) return;
+      const touch = e.touches[0];
+      startX = touch.clientX;
+      startY = touch.clientY;
+      moved = false;
+      fired = false;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (moved) return;
+        fired = true;
+        if (navigator.vibrate) navigator.vibrate(15);
+        openMessageMenu(startX, startY, div, info);
+      }, 450);
+    }, { passive: true });
+
+    div.addEventListener('touchmove', (e) => {
+      const touch = e.touches[0];
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) {
+        moved = true;
+        clearTimeout(timer);
+      }
+    }, { passive: true });
+
+    div.addEventListener('touchend', (e) => {
+      clearTimeout(timer);
+      // Довге утримання щойно відкрило меню — гасимо "синтетичний" клік по повідомленню,
+      // щоб він одразу не закрив щойно відкрите меню
+      if (fired) {
+        e.preventDefault();
+        fired = false;
+      }
+    });
+    div.addEventListener('touchcancel', () => clearTimeout(timer));
+  }
 
   function openMessageMenu(x, y, msgDiv, info) {
     closeMessageMenu();

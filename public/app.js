@@ -1411,7 +1411,10 @@
     if (!seenDate) return null;
     const now = new Date();
 
-    if (presence.justNow) {
+    // Рахуємо "щойно" від реального часу на клієнті (а не від статичного прапорця з моменту події),
+    // щоб текст сам оновився на точний час через хвилину без нової події з сервера
+    const secondsSinceSeen = (now - seenDate) / 1000;
+    if (secondsSinceSeen < 60) {
       return { text: 'був(ла) щойно', online: false };
     }
 
@@ -1442,6 +1445,14 @@
     el2.textContent = formatted.text;
     el2.classList.toggle('online', formatted.online);
   }
+
+  // Раз на 15 секунд перемальовуємо статус відкритого чату — щоб "щойно" саме
+  // перетворилось на точний час через хвилину, без перезавантаження сторінки
+  setInterval(() => {
+    if (state.activeChatWith) {
+      renderChatHeaderStatus(state.activeChatWith.presence);
+    }
+  }, 15000);
 
   // ---------- Init ----------
 

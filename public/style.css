@@ -146,6 +146,7 @@ body {
   flex-direction: column;
   overflow: hidden;
   min-height: 0;
+  min-width: 0;
 }
 
 .sidebar-header {
@@ -164,12 +165,17 @@ body {
   border-radius: 10px;
   padding: 4px 6px;
   margin: -4px -6px;
+  min-width: 0;
+  flex: 1;
 }
 .me:hover { background: var(--bg-elevated); }
 
 .me-username {
   font-weight: 700;
   font-size: 15px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .me-username::before { content: "@"; color: var(--text-dim); }
 
@@ -303,6 +309,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 
 .empty-state {
@@ -333,11 +340,18 @@ body {
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--bg);
+  gap: 10px;
 }
 .chat-header-info {
   display: flex;
   align-items: center;
   gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 #chatWithUsername::before { content: "@"; color: var(--text-dim); }
 
@@ -346,9 +360,21 @@ body {
   flex-direction: column;
   gap: 1px;
   line-height: 1.2;
+  min-width: 0;
+}
+
+#chatWithUsername {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-header-status {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 11.5px;
   font-weight: 400;
   color: var(--text-dim);
@@ -359,6 +385,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-shrink: 0;
 }
 
 .volume-control {

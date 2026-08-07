@@ -121,28 +121,74 @@ function groupReactions(rows) {
 }
 
 // ---------- Присутність (онлайн / був(ла) нещодавно) ----------
-// userId -> Set(socketId), лише сокети з реально видимою (не згорнутою/неактивною) вкладкою
+
+// userId -> Set(socketId) — сокети із реально видимою (не згорнутою/фоновою) вкладкою будь-де на сайті
 const visibleSocketsByUser = new Map();
+// chatId -> Map<userId, Set<socketId>> — хто зараз дивиться саме цей чат (відкритий і видимий)
+const chatViewers = new Map();
 
 function isUserOnline(userId) {
   const set = visibleSocketsByUser.get(userId);
   return !!set && set.size > 0;
 }
 
-function getPresence(userId) {
-  const row = db.prepare('SELECT last_seen_at as lastSeenAt, show_last_seen as showLastSeen FROM users WHERE id = ?').get(userId);
-  if (!row) return { online: false, lastSeenAt: null, hidden: false };
-  if (!row.showLastSeen) return { online: false, lastSeenAt: null, hidden: true };
-  return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, hidden: false };
+function isUserViewingChat(userId, chatId) {
+  const m = chatViewers.get(chatId);
+  if (!m) return false;
+  const set = m.get(userId);
+  return !!set && set.size > 0;
 }
 
-function notifyChatPartnersPresence(userId) {
-  const presence = getPresence(userId);
+function addChatViewer(chatId, userId, socketId) {
+  let m = chatViewers.get(chatId);
+  if (!m) { m = new Map(); chatViewers.set(chatId, m); }
+  let set = m.get(userId);
+  if (!set) { set = new Set(); m.set(userId, set); }
+  set.add(socketId);
+}
+
+function removeChatViewer(chatId, userId, socketId) {
+  const m = chatViewers.get(chatId);
+  if (!m) return;
+  const set = m.get(userId);
+  if (!set) return;
+  set.delete(socketId);
+  if (set.size === 0) m.delete(userId);
+  if (m.size === 0) chatViewers.delete(chatId);
+}
+
+// Присутність userId очима конкретного viewerId (chatId — їхній спільний чат, якщо є)
+function getPresenceForViewer(userId, chatId, viewerId) {
+  const row = db.prepare('SELECT last_seen_at as lastSeenAt, show_last_seen as showLastSeen FROM users WHERE id = ?').get(userId);
+  if (!row) return { online: false, lastSeenAt: null, vague: false };
+
+  // Якщо людина прямо зараз дивиться відкритий чат саме з viewerId — показуємо "онлайн" завжди,
+  // незалежно від налаштувань приватності (аналогічно до галочок прочитання)
+  if (chatId && isUserViewingChat(userId, chatId)) {
+    return { online: true, lastSeenAt: null, vague: false };
+  }
+
+  if (!row.showLastSeen) {
+    // Активність прихована — ніколи не показуємо точний час чи загальний онлайн, лише розпливчасте "був(ла) недавно"
+    return { online: false, lastSeenAt: null, vague: true };
+  }
+
+  return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, vague: false };
+}
+
+function findChatId(userAId, userBId) {
+  const [u1, u2] = userAId < userBId ? [userAId, userBId] : [userBId, userAId];
+  const chat = db.prepare('SELECT id FROM chats WHERE user1_id = ? AND user2_id = ?').get(u1, u2);
+  return chat ? chat.id : null;
+}
+
+function broadcastPresenceToPartners(userId) {
   const partners = db.prepare(`
-    SELECT DISTINCT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
+    SELECT id as chatId, CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
     FROM chats WHERE user1_id = ? OR user2_id = ?
   `).all(userId, userId, userId);
   partners.forEach((p) => {
+    const presence = getPresenceForViewer(userId, p.chatId, p.otherId);
     io.to(`user:${p.otherId}`).emit('presence:updated', { userId, ...presence });
   });
 }
@@ -158,6 +204,7 @@ function notifyChatPartnersAvatarChanged(userId, avatarUrl) {
 }
 
 // ---------- REST API ----------
+
 
 app.post('/api/register', (req, res) => {
   const { username, password } = req.body || {};
@@ -206,7 +253,7 @@ app.get('/api/me', authMiddleware, (req, res) => {
 app.post('/api/me/privacy', authMiddleware, (req, res) => {
   const { showLastSeen } = req.body || {};
   db.prepare('UPDATE users SET show_last_seen = ? WHERE id = ?').run(showLastSeen ? 1 : 0, req.user.id);
-  notifyChatPartnersPresence(req.user.id);
+  broadcastPresenceToPartners(req.user.id);
   res.json({ ok: true, showLastSeen: !!showLastSeen });
 });
 
@@ -276,7 +323,10 @@ app.get('/api/search', authMiddleware, (req, res) => {
   const users = db.prepare(
     'SELECT id, username, avatar_url as avatarUrl FROM users WHERE username LIKE ? AND id != ? LIMIT 20'
   ).all(`%${q}%`, req.user.id);
-  users.forEach((u) => { u.presence = getPresence(u.id); });
+  users.forEach((u) => {
+    const chatId = findChatId(req.user.id, u.id);
+    u.presence = getPresenceForViewer(u.id, chatId, req.user.id);
+  });
   res.json({ users });
 });
 
@@ -291,7 +341,12 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
   res.json({
     chat: {
       id: chat.id,
-      withUser: { id: target.id, username: target.username, avatarUrl: target.avatar_url, presence: getPresence(target.id) },
+      withUser: {
+        id: target.id,
+        username: target.username,
+        avatarUrl: target.avatar_url,
+        presence: getPresenceForViewer(target.id, chat.id, req.user.id),
+      },
     },
   });
 });
@@ -306,7 +361,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
 
   const result = chats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
-    if (other) other.presence = getPresence(other.id);
+    if (other) other.presence = getPresenceForViewer(other.id, row.chatId, req.user.id);
     const lastMsg = db.prepare(
       'SELECT text, image_url, audio_url, video_url, sender_id, created_at FROM messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1'
     ).get(row.chatId);
@@ -386,21 +441,49 @@ io.on('connection', (socket) => {
       if (!nowOnline) {
         db.prepare("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?").run(uid);
       }
-      notifyChatPartnersPresence(uid);
+      broadcastPresenceToPartners(uid);
+    }
+  });
+
+  socket.on('chat:active', (payload) => {
+    const uid = socket.user.id;
+    const chatId = payload && payload.chatId ? Number(payload.chatId) : null;
+    const prevChatId = socket.data.activeChatId || null;
+
+    if (prevChatId && prevChatId !== chatId) {
+      removeChatViewer(prevChatId, uid, socket.id);
+    }
+    if (chatId && chatId !== prevChatId) {
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (chat && (chat.user1_id === uid || chat.user2_id === uid)) {
+        addChatViewer(chatId, uid, socket.id);
+      }
+    }
+    socket.data.activeChatId = chatId;
+
+    if (prevChatId !== chatId) {
+      broadcastPresenceToPartners(uid);
     }
   });
 
   socket.on('disconnect', () => {
     const uid = socket.user.id;
-    const set = visibleSocketsByUser.get(uid);
-    if (!set) return;
-    const wasOnline = set.size > 0;
-    set.delete(socket.id);
-    const nowOnline = set.size > 0;
-    if (wasOnline && !nowOnline) {
-      db.prepare("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?").run(uid);
-      notifyChatPartnersPresence(uid);
+
+    if (socket.data.activeChatId) {
+      removeChatViewer(socket.data.activeChatId, uid, socket.id);
     }
+
+    const set = visibleSocketsByUser.get(uid);
+    if (set) {
+      const wasOnline = set.size > 0;
+      set.delete(socket.id);
+      const nowOnline = set.size > 0;
+      if (wasOnline && !nowOnline) {
+        db.prepare("UPDATE users SET last_seen_at = datetime('now') WHERE id = ?").run(uid);
+      }
+    }
+
+    broadcastPresenceToPartners(uid);
   });
 
   socket.on('message:send', (payload, ack) => {

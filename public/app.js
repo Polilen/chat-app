@@ -145,15 +145,23 @@
     state.socket.emit('presence:update', { visible: isPageVisible() });
   }
 
+  function sendChatActiveUpdate() {
+    if (!state.socket || !state.socket.connected) return;
+    const chatId = isPageVisible() ? state.activeChatId : null;
+    state.socket.emit('chat:active', { chatId });
+  }
+
   document.addEventListener('visibilitychange', () => {
     if (isPageVisible()) markActiveChatReadIfVisible();
     sendPresenceUpdate();
+    sendChatActiveUpdate();
   });
 
   function connectSocket() {
     state.socket = io({ auth: { token: state.token } });
     state.socket.on('connect', () => {
       sendPresenceUpdate();
+      sendChatActiveUpdate();
     });
     state.socket.on('message:new', (msg) => {
       // Оновлюємо список чатів (щоб з'явився новий/піднявся вгору)
@@ -203,8 +211,8 @@
         renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
       }
     });
-    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, hidden }) => {
-      const presence = { online, lastSeenAt, hidden };
+    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, vague }) => {
+      const presence = { online, lastSeenAt, vague };
       let changed = false;
       state.chats.forEach((chat) => {
         if (chat.withUser.id === userId) {
@@ -609,6 +617,7 @@
     el('chatWithUsername').textContent = withUser.username;
     renderAvatarInto(el('chatHeaderAvatar'), withUser.username, withUser.avatarUrl);
     renderChatHeaderStatus(withUser.presence);
+    sendChatActiveUpdate();
     renderChatList();
 
     try {
@@ -1393,19 +1402,14 @@
   // ---------- Присутність (онлайн / був(ла) недавно) ----------
 
   function formatPresence(presence) {
-    if (!presence || presence.hidden) return null;
+    if (!presence) return null;
     if (presence.online) return { text: 'у мережі', online: true };
+    if (presence.vague) return { text: 'був(ла) недавно', online: false };
     if (!presence.lastSeenAt) return null;
 
     const seenDate = parseServerDate(presence.lastSeenAt);
     if (!seenDate) return null;
     const now = new Date();
-    const diffMs = now - seenDate;
-    const diffMin = diffMs / 60000;
-
-    if (diffMin < 3) {
-      return { text: 'був(ла) недавно', online: false };
-    }
 
     const time = seenDate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
     const isSameDay = seenDate.toDateString() === now.toDateString();

@@ -211,8 +211,8 @@
         renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
       }
     });
-    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, vague }) => {
-      const presence = { online, lastSeenAt, vague };
+    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, vague, justNow }) => {
+      const presence = { online, lastSeenAt, vague, justNow };
       let changed = false;
       state.chats.forEach((chat) => {
         if (chat.withUser.id === userId) {
@@ -1404,12 +1404,16 @@
   function formatPresence(presence) {
     if (!presence) return null;
     if (presence.online) return { text: 'у мережі', online: true };
-    if (presence.vague) return { text: 'був(ла) недавно', online: false };
+    if (presence.vague) return { text: presence.justNow ? 'був(ла) щойно' : 'був(ла) недавно', online: false };
     if (!presence.lastSeenAt) return null;
 
     const seenDate = parseServerDate(presence.lastSeenAt);
     if (!seenDate) return null;
     const now = new Date();
+
+    if (presence.justNow) {
+      return { text: 'був(ла) щойно', online: false };
+    }
 
     const time = seenDate.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
     const isSameDay = seenDate.toDateString() === now.toDateString();

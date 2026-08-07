@@ -160,20 +160,26 @@ function removeChatViewer(chatId, userId, socketId) {
 // Присутність userId очима конкретного viewerId (chatId — їхній спільний чат, якщо є)
 function getPresenceForViewer(userId, chatId, viewerId) {
   const row = db.prepare('SELECT last_seen_at as lastSeenAt, show_last_seen as showLastSeen FROM users WHERE id = ?').get(userId);
-  if (!row) return { online: false, lastSeenAt: null, vague: false };
+  if (!row) return { online: false, lastSeenAt: null, vague: false, justNow: false };
 
   // Якщо людина прямо зараз дивиться відкритий чат саме з viewerId — показуємо "онлайн" завжди,
   // незалежно від налаштувань приватності (аналогічно до галочок прочитання)
   if (chatId && isUserViewingChat(userId, chatId)) {
-    return { online: true, lastSeenAt: null, vague: false };
+    return { online: true, lastSeenAt: null, vague: false, justNow: false };
   }
+
+  const secondsSinceSeen = row.lastSeenAt
+    ? (Date.now() - new Date(row.lastSeenAt.replace(' ', 'T') + 'Z').getTime()) / 1000
+    : Infinity;
+  const justNow = secondsSinceSeen < 60;
 
   if (!row.showLastSeen) {
-    // Активність прихована — ніколи не показуємо точний час чи загальний онлайн, лише розпливчасте "був(ла) недавно"
-    return { online: false, lastSeenAt: null, vague: true };
+    // Активність прихована — ніколи не показуємо точний час чи загальний онлайн,
+    // лише розпливчасте "був(ла) щойно" / "був(ла) недавно" (без точного часу)
+    return { online: false, lastSeenAt: null, vague: true, justNow };
   }
 
-  return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, vague: false };
+  return { online: isUserOnline(userId), lastSeenAt: row.lastSeenAt, vague: false, justNow };
 }
 
 function findChatId(userAId, userBId) {

@@ -21,13 +21,31 @@ db.exec(`
 
   CREATE TABLE IF NOT EXISTS chats (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user1_id INTEGER NOT NULL,
-    user2_id INTEGER NOT NULL,
+    user1_id INTEGER,
+    user2_id INTEGER,
+    is_group INTEGER NOT NULL DEFAULT 0,
+    name TEXT,
+    avatar_url TEXT,
+    creator_id INTEGER,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(user1_id, user2_id),
     FOREIGN KEY(user1_id) REFERENCES users(id),
-    FOREIGN KEY(user2_id) REFERENCES users(id)
+    FOREIGN KEY(user2_id) REFERENCES users(id),
+    FOREIGN KEY(creator_id) REFERENCES users(id)
   );
+
+  CREATE TABLE IF NOT EXISTS chat_members (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    chat_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    role TEXT NOT NULL DEFAULT 'member',
+    joined_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(chat_id, user_id),
+    FOREIGN KEY(chat_id) REFERENCES chats(id),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_chat_members_chat ON chat_members(chat_id);
+  CREATE INDEX IF NOT EXISTS idx_chat_members_user ON chat_members(user_id);
 
   CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,5 +136,36 @@ const chatDeletionColumns = db.prepare('PRAGMA table_info(chat_deletions)').all(
 if (chatDeletionColumns.length && !chatDeletionColumns.includes('last_message_id')) {
   db.exec("ALTER TABLE chat_deletions ADD COLUMN last_message_id INTEGER NOT NULL DEFAULT 0");
 }
+
+// Міграція для баз, створених до появи групових чатів:
+// у старій схемі user1_id/user2_id були NOT NULL — для групових чатів вони мають бути NULL,
+// тож стару таблицю (якщо потрібно) перебудовуємо, зберігаючи всі існуючі 1:1-чати
+const chatsInfo = db.prepare('PRAGMA table_info(chats)').all();
+const user1Col = chatsInfo.find((c) => c.name === 'user1_id');
+const hasGroupColumns = chatsInfo.some((c) => c.name === 'is_group');
+
+if (user1Col && (user1Col.notnull === 1 || !hasGroupColumns)) {
+  db.exec(`
+    CREATE TABLE chats_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user1_id INTEGER,
+      user2_id INTEGER,
+      is_group INTEGER NOT NULL DEFAULT 0,
+      name TEXT,
+      avatar_url TEXT,
+      creator_id INTEGER,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY(user1_id) REFERENCES users(id),
+      FOREIGN KEY(user2_id) REFERENCES users(id),
+      FOREIGN KEY(creator_id) REFERENCES users(id)
+    );
+    INSERT INTO chats_new (id, user1_id, user2_id, created_at)
+      SELECT id, user1_id, user2_id, created_at FROM chats;
+    DROP TABLE chats;
+    ALTER TABLE chats_new RENAME TO chats;
+  `);
+}
+
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_pair ON chats(user1_id, user2_id) WHERE is_group = 0;');
 
 module.exports = db;

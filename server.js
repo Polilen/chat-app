@@ -111,6 +111,32 @@ function otherUserId(chat, myId) {
   return chat.user1_id === myId ? chat.user2_id : chat.user1_id;
 }
 
+function isParticipant(chat, userId) {
+  if (chat.is_group) {
+    const row = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chat.id, userId);
+    return !!row;
+  }
+  return chat.user1_id === userId || chat.user2_id === userId;
+}
+
+function getParticipantIds(chat, excludeUserId) {
+  if (chat.is_group) {
+    const rows = db.prepare('SELECT user_id FROM chat_members WHERE chat_id = ?').all(chat.id);
+    return rows.map((r) => r.user_id).filter((id) => id !== excludeUserId);
+  }
+  return [otherUserId(chat, excludeUserId)];
+}
+
+function getMemberCount(chatId) {
+  const row = db.prepare('SELECT COUNT(*) as cnt FROM chat_members WHERE chat_id = ?').get(chatId);
+  return row ? row.cnt : 0;
+}
+
+function isGroupAdmin(chatId, userId) {
+  const row = db.prepare("SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ? AND role = 'admin'").get(chatId, userId);
+  return !!row;
+}
+
 function groupReactions(rows) {
   const byEmoji = {};
   rows.forEach((r) => {
@@ -358,20 +384,130 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
   });
 });
 
+// ---------- Групові чати ----------
+
+function serializeGroup(chatId) {
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+  const members = db.prepare(`
+    SELECT u.id, u.username, u.avatar_url as avatarUrl, cm.role
+    FROM chat_members cm JOIN users u ON u.id = cm.user_id
+    WHERE cm.chat_id = ?
+    ORDER BY cm.joined_at ASC
+  `).all(chatId);
+  return {
+    id: chat.id,
+    isGroup: true,
+    groupName: chat.name,
+    groupAvatarUrl: chat.avatar_url,
+    creatorId: chat.creator_id,
+    memberCount: members.length,
+    members,
+  };
+}
+
+function broadcastGroupUpdated(chatId) {
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+  if (!chat) return;
+  const group = serializeGroup(chatId);
+  getParticipantIds(chat, null).forEach((uid) => {
+    io.to(`user:${uid}`).emit('group:updated', group);
+  });
+}
+
+app.post('/api/groups', authMiddleware, (req, res) => {
+  const { name } = req.body || {};
+  const cleanName = String(name || '').trim();
+  if (!cleanName) return res.status(400).json({ error: "Вкажіть назву групи" });
+  if (cleanName.length > 60) return res.status(400).json({ error: 'Назва занадто довга (максимум 60 символів)' });
+
+  const info = db.prepare(
+    'INSERT INTO chats (is_group, name, creator_id) VALUES (1, ?, ?)'
+  ).run(cleanName, req.user.id);
+  const chatId = info.lastInsertRowid;
+  db.prepare('INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, ?)').run(chatId, req.user.id, 'admin');
+
+  res.json({ group: serializeGroup(chatId) });
+});
+
+app.post('/api/groups/:chatId/avatar', authMiddleware, (req, res) => {
+  const chatId = Number(req.params.chatId);
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+  if (!chat) return res.status(404).json({ error: 'Групу не знайдено' });
+  if (!isGroupAdmin(chatId, req.user.id)) return res.status(403).json({ error: 'Лише адміністратор може змінити аватарку групи' });
+
+  avatarUpload.single('avatar')(req, res, (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+    if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
+
+    const old = chat.avatar_url;
+    const avatarUrl = `/uploads/${req.file.filename}`;
+    db.prepare('UPDATE chats SET avatar_url = ? WHERE id = ?').run(avatarUrl, chatId);
+    if (old) {
+      fs.unlink(path.join(UPLOAD_DIR, path.basename(old)), () => {});
+    }
+    broadcastGroupUpdated(chatId);
+    res.json({ avatarUrl });
+  });
+});
+
+app.post('/api/groups/:chatId/rename', authMiddleware, (req, res) => {
+  const chatId = Number(req.params.chatId);
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+  if (!chat) return res.status(404).json({ error: 'Групу не знайдено' });
+  if (!isGroupAdmin(chatId, req.user.id)) return res.status(403).json({ error: 'Лише адміністратор може змінити назву групи' });
+
+  const cleanName = String((req.body || {}).name || '').trim();
+  if (!cleanName) return res.status(400).json({ error: 'Вкажіть назву групи' });
+  if (cleanName.length > 60) return res.status(400).json({ error: 'Назва занадто довга (максимум 60 символів)' });
+
+  db.prepare('UPDATE chats SET name = ? WHERE id = ?').run(cleanName, chatId);
+  broadcastGroupUpdated(chatId);
+  res.json({ ok: true, name: cleanName });
+});
+
+app.post('/api/groups/:chatId/invite', authMiddleware, (req, res) => {
+  const chatId = Number(req.params.chatId);
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+  if (!chat) return res.status(404).json({ error: 'Групу не знайдено' });
+  if (!isParticipant(chat, req.user.id)) return res.status(403).json({ error: 'Немає доступу до цієї групи' });
+
+  const username = String((req.body || {}).username || '').trim().toLowerCase();
+  const target = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
+  if (!target) return res.status(404).json({ error: 'Користувача не знайдено' });
+
+  const already = db.prepare('SELECT 1 FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chatId, target.id);
+  if (already) return res.status(409).json({ error: 'Користувач вже у групі' });
+
+  db.prepare('INSERT INTO chat_members (chat_id, user_id, role) VALUES (?, ?, ?)').run(chatId, target.id, 'member');
+  db.prepare('DELETE FROM chat_deletions WHERE chat_id = ? AND user_id = ?').run(chatId, target.id);
+
+  broadcastGroupUpdated(chatId);
+  res.json({ ok: true, group: serializeGroup(chatId) });
+});
+
+app.get('/api/groups/:chatId', authMiddleware, (req, res) => {
+  const chatId = Number(req.params.chatId);
+  const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+  if (!chat) return res.status(404).json({ error: 'Групу не знайдено' });
+  if (!isParticipant(chat, req.user.id)) return res.status(403).json({ error: 'Немає доступу до цієї групи' });
+  res.json({ group: serializeGroup(chatId) });
+});
+
 app.get('/api/chats', authMiddleware, (req, res) => {
-  const chats = db.prepare(`
+  const directChats = db.prepare(`
     SELECT c.id as chatId,
            CASE WHEN c.user1_id = ? THEN c.user2_id ELSE c.user1_id END as otherId
     FROM chats c
     LEFT JOIN chat_deletions cd ON cd.chat_id = c.id AND cd.user_id = ?
-    WHERE (c.user1_id = ? OR c.user2_id = ?)
+    WHERE c.is_group = 0
+      AND (c.user1_id = ? OR c.user2_id = ?)
       AND (
         cd.id IS NULL
         OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id AND m.id > cd.last_message_id)
       )
   `).all(req.user.id, req.user.id, req.user.id, req.user.id);
 
-  const result = chats.map(row => {
+  const directResult = directChats.map(row => {
     const other = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(row.otherId);
     if (other) other.presence = getPresenceForViewer(other.id, row.chatId, req.user.id);
     const lastMsg = db.prepare(`
@@ -383,10 +519,43 @@ app.get('/api/chats', authMiddleware, (req, res) => {
     `).get(row.chatId, req.user.id);
     return {
       chatId: row.chatId,
+      isGroup: false,
       withUser: other,
       lastMessage: lastMsg || null
     };
-  }).sort((a, b) => {
+  });
+
+  const groupChats = db.prepare(`
+    SELECT c.id as chatId, c.name, c.avatar_url as avatarUrl
+    FROM chats c
+    JOIN chat_members cm ON cm.chat_id = c.id AND cm.user_id = ?
+    LEFT JOIN chat_deletions cd ON cd.chat_id = c.id AND cd.user_id = ?
+    WHERE c.is_group = 1
+      AND (
+        cd.id IS NULL
+        OR EXISTS (SELECT 1 FROM messages m WHERE m.chat_id = c.id AND m.id > cd.last_message_id)
+      )
+  `).all(req.user.id, req.user.id);
+
+  const groupResult = groupChats.map(row => {
+    const lastMsg = db.prepare(`
+      SELECT text, image_url, audio_url, video_url, sender_id, created_at
+      FROM messages
+      WHERE chat_id = ?
+        AND id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
+      ORDER BY id DESC LIMIT 1
+    `).get(row.chatId, req.user.id);
+    return {
+      chatId: row.chatId,
+      isGroup: true,
+      groupName: row.name,
+      groupAvatarUrl: row.avatarUrl,
+      memberCount: getMemberCount(row.chatId),
+      lastMessage: lastMsg || null
+    };
+  });
+
+  const result = [...directResult, ...groupResult].sort((a, b) => {
     const at = a.lastMessage ? a.lastMessage.created_at : '';
     const bt = b.lastMessage ? b.lastMessage.created_at : '';
     return bt.localeCompare(at);
@@ -398,7 +567,7 @@ app.get('/api/chats', authMiddleware, (req, res) => {
 app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   const chatId = Number(req.params.chatId);
   const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-  if (!chat || (chat.user1_id !== req.user.id && chat.user2_id !== req.user.id)) {
+  if (!chat || !isParticipant(chat, req.user.id)) {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
   const clearedAt = db.prepare(
@@ -407,13 +576,15 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   const cutoffId = clearedAt ? clearedAt.lastMessageId : 0;
 
   const messages = db.prepare(`
-    SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl,
-           video_url as videoUrl, read_at as readAt, created_at as createdAt
-    FROM messages
-    WHERE chat_id = ?
-      AND id > ?
-      AND id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
-    ORDER BY id ASC
+    SELECT m.id, m.sender_id as senderId, u.username as senderUsername, u.avatar_url as senderAvatarUrl,
+           m.text, m.image_url as imageUrl, m.audio_url as audioUrl,
+           m.video_url as videoUrl, m.read_at as readAt, m.created_at as createdAt
+    FROM messages m
+    JOIN users u ON u.id = m.sender_id
+    WHERE m.chat_id = ?
+      AND m.id > ?
+      AND m.id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
+    ORDER BY m.id ASC
   `).all(chatId, cutoffId, req.user.id);
 
   const reactionRows = db.prepare(`
@@ -525,7 +696,7 @@ io.on('connection', (socket) => {
         return;
       }
       const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+      if (!chat || !isParticipant(chat, socket.user.id)) {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
         return;
       }
@@ -536,15 +707,23 @@ io.on('connection', (socket) => {
         'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
-      const otherId = otherUserId(chat, socket.user.id);
       const senderRow = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(socket.user.id);
       const senderInfo = senderRow || { id: socket.user.id, username: socket.user.username };
+      const enrichedMessage = { ...message, senderUsername: senderInfo.username, senderAvatarUrl: senderInfo.avatarUrl };
 
-      // Надсилаємо обом учасникам: відправнику (інша вкладка/пристрій) та отримувачу
-      io.to(`user:${socket.user.id}`).emit('message:new', { ...message, withUser: { id: otherId } , from: senderInfo});
-      io.to(`user:${otherId}`).emit('message:new', { ...message, withUser: senderInfo, from: senderInfo });
+      if (chat.is_group) {
+        // Групові чати: розсилаємо всім учасникам (включно з відправником — для синхронізації інших вкладок)
+        getParticipantIds(chat, null).forEach((uid) => {
+          io.to(`user:${uid}`).emit('message:new', { ...enrichedMessage, isGroup: true, from: senderInfo });
+        });
+      } else {
+        const otherId = otherUserId(chat, socket.user.id);
+        // Надсилаємо обом учасникам: відправнику (інша вкладка/пристрій) та отримувачу
+        io.to(`user:${socket.user.id}`).emit('message:new', { ...enrichedMessage, withUser: { id: otherId } , from: senderInfo});
+        io.to(`user:${otherId}`).emit('message:new', { ...enrichedMessage, withUser: senderInfo, from: senderInfo });
+      }
 
-      if (ack) ack({ ok: true, message });
+      if (ack) ack({ ok: true, message: enrichedMessage });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });
@@ -565,7 +744,7 @@ io.on('connection', (socket) => {
         return;
       }
       const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(message.chat_id);
-      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+      if (!chat || !isParticipant(chat, socket.user.id)) {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
         return;
       }
@@ -589,10 +768,10 @@ io.on('connection', (socket) => {
       ).all(messageId);
       const reactions = groupReactions(rows);
 
-      const otherId = otherUserId(chat, socket.user.id);
       const out = { chatId: chat.id, messageId, reactions };
-      io.to(`user:${socket.user.id}`).emit('reaction:updated', out);
-      io.to(`user:${otherId}`).emit('reaction:updated', out);
+      getParticipantIds(chat, null).forEach((uid) => {
+        io.to(`user:${uid}`).emit('reaction:updated', out);
+      });
 
       if (ack) ack({ ok: true, reactions });
     } catch (err) {
@@ -609,7 +788,7 @@ io.on('connection', (socket) => {
         return;
       }
       const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+      if (!chat || !isParticipant(chat, socket.user.id)) {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
         return;
       }
@@ -623,8 +802,9 @@ io.on('connection', (socket) => {
         db.prepare(`UPDATE messages SET read_at = datetime('now') WHERE id IN (${placeholders})`).run(...ids);
         const readAt = db.prepare('SELECT read_at FROM messages WHERE id = ?').get(ids[0]).read_at;
 
-        const otherId = otherUserId(chat, socket.user.id);
-        io.to(`user:${otherId}`).emit('messages:read', { chatId, messageIds: ids, readAt });
+        getParticipantIds(chat, socket.user.id).forEach((uid) => {
+          io.to(`user:${uid}`).emit('messages:read', { chatId, messageIds: ids, readAt });
+        });
       }
 
       if (ack) ack({ ok: true, count: unread.length });
@@ -643,7 +823,7 @@ io.on('connection', (socket) => {
         return;
       }
       const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+      if (!chat || !isParticipant(chat, socket.user.id)) {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
         return;
       }
@@ -663,10 +843,10 @@ io.on('connection', (socket) => {
         db.prepare(`DELETE FROM message_deletions WHERE message_id IN (${delPlaceholders})`).run(...deletableIds);
         db.prepare(`DELETE FROM messages WHERE id IN (${delPlaceholders})`).run(...deletableIds);
 
-        const otherId = otherUserId(chat, socket.user.id);
         const payloadOut = { chatId, messageIds: deletableIds, scope: 'everyone' };
-        io.to(`user:${socket.user.id}`).emit('message:deleted', payloadOut);
-        io.to(`user:${otherId}`).emit('message:deleted', payloadOut);
+        getParticipantIds(chat, null).forEach((uid) => {
+          io.to(`user:${uid}`).emit('message:deleted', payloadOut);
+        });
 
         if (ack) ack({ ok: true, deletedIds: deletableIds, scope: 'everyone' });
         return;
@@ -705,8 +885,12 @@ io.on('connection', (socket) => {
         return;
       }
       const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
-      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+      if (!chat || !isParticipant(chat, socket.user.id)) {
         if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+      if (chat.is_group) {
+        if (ack) ack({ error: 'Груповий чат можна лише покинути (вийти з групи)' });
         return;
       }
 
@@ -735,6 +919,46 @@ io.on('connection', (socket) => {
 
       io.to(`user:${socket.user.id}`).emit('chat:deleted', { chatId, scope: 'me' });
       if (ack) ack({ ok: true, scope: 'me' });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('group:leave', (payload, ack) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) {
+        if (ack) ack({ error: 'Не вказано групу' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+      if (!chat || !isParticipant(chat, socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цієї групи' });
+        return;
+      }
+
+      db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chatId, socket.user.id);
+      const remaining = db.prepare('SELECT user_id, role FROM chat_members WHERE chat_id = ? ORDER BY joined_at ASC').all(chatId);
+
+      if (!remaining.length) {
+        // Останній учасник вийшов — групу можна видалити повністю
+        db.prepare('DELETE FROM reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM message_deletions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)').run(chatId);
+        db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
+        db.prepare('DELETE FROM chat_deletions WHERE chat_id = ?').run(chatId);
+        db.prepare('DELETE FROM chats WHERE id = ?').run(chatId);
+      } else if (!remaining.some((m) => m.role === 'admin')) {
+        // Адмін пішов — призначаємо адміном того, хто приєднався найраніше
+        db.prepare("UPDATE chat_members SET role = 'admin' WHERE chat_id = ? AND user_id = ?").run(chatId, remaining[0].user_id);
+      }
+
+      io.to(`user:${socket.user.id}`).emit('chat:deleted', { chatId, scope: 'me' });
+      remaining.forEach((m) => {
+        io.to(`user:${m.user_id}`).emit('group:updated', serializeGroup(chatId));
+      });
+
+      if (ack) ack({ ok: true });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

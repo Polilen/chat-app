@@ -43,6 +43,7 @@
           <div id="meAvatar" class="avatar-slot"></div>
           <span class="me-username" id="meUsername"></span>
         </div>
+        <button id="newGroupBtn" class="icon-btn" title="Створити групу">👥</button>
         <button id="logoutBtn" class="icon-btn" title="Вийти">⏻</button>
       </div>
 
@@ -62,7 +63,7 @@
 
       <div id="activeChat" class="active-chat hidden">
         <header class="chat-header">
-          <div class="chat-header-info">
+          <div class="chat-header-info" id="chatHeaderInfo">
             <button id="chatBackBtn" class="icon-btn chat-back-btn" title="Назад до списку чатів">←</button>
             <div id="chatHeaderAvatar" class="avatar-slot"></div>
             <div class="chat-header-texts">
@@ -206,6 +207,60 @@
 
   <!-- Меню чату (правий клік / довге натискання на чаті в списку) -->
   <div id="chatMenuPopover" class="reaction-popover hidden"></div>
+
+  <!-- Створення групи -->
+  <div id="createGroupModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="createGroup"></div>
+    <div class="forward-modal-content settings-modal-content">
+      <div class="forward-modal-header">
+        <span>Нова група</span>
+        <button id="createGroupModalClose" class="icon-btn" data-close="createGroup">✕</button>
+      </div>
+      <div class="settings-body">
+        <div id="createGroupAvatar" class="avatar-slot avatar-slot-large"></div>
+        <input type="file" id="createGroupAvatarInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+        <button type="button" id="createGroupAvatarBtn" class="modal-action-btn">🖼 Додати фото групи</button>
+        <input type="text" id="createGroupNameInput" placeholder="Назва групи" maxlength="60" class="group-name-input">
+        <div class="group-invite-box">
+          <input type="text" id="createGroupInviteInput" placeholder="Додати учасника за юзернеймом…">
+          <div id="createGroupInviteResults" class="search-results hidden"></div>
+        </div>
+        <div id="createGroupMembers" class="group-member-chips"></div>
+        <p id="createGroupStatus" class="forward-status hidden" style="border:none"></p>
+        <button type="button" id="createGroupSubmitBtn" class="modal-action-btn" style="width:100%;justify-content:center;margin-top:6px;">Створити групу</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Інформація про групу -->
+  <div id="groupInfoModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="groupInfo"></div>
+    <div class="forward-modal-content settings-modal-content">
+      <div class="forward-modal-header">
+        <span>Інформація про групу</span>
+        <button id="groupInfoModalClose" class="icon-btn" data-close="groupInfo">✕</button>
+      </div>
+      <div class="settings-body">
+        <div id="groupInfoAvatar" class="avatar-slot avatar-slot-large"></div>
+        <input type="file" id="groupInfoAvatarInput" accept="image/png,image/jpeg,image/gif,image/webp" class="hidden">
+        <button type="button" id="groupInfoChangeAvatarBtn" class="modal-action-btn hidden">🖼 Змінити фото групи</button>
+        <div id="groupInfoNameView" class="settings-username"></div>
+        <div id="groupInfoNameEdit" class="group-name-edit hidden">
+          <input type="text" id="groupInfoNameInput" maxlength="60" class="group-name-input">
+          <button type="button" id="groupInfoNameSaveBtn" class="modal-action-btn">Зберегти</button>
+        </div>
+        <button type="button" id="groupInfoRenameBtn" class="modal-action-btn hidden">✏️ Змінити назву</button>
+        <p id="groupInfoMemberCount" class="chat-header-status"></p>
+        <div class="group-invite-box">
+          <input type="text" id="groupInfoInviteInput" placeholder="Додати учасника за юзернеймом…">
+          <div id="groupInfoInviteResults" class="search-results hidden"></div>
+        </div>
+        <div id="groupInfoMembersList" class="group-members-list"></div>
+        <p id="groupInfoStatus" class="forward-status hidden" style="border:none"></p>
+        <button type="button" id="groupLeaveBtn" class="modal-action-btn danger" style="width:100%;justify-content:center;margin-top:6px;">Покинути групу</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>

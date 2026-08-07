@@ -1281,7 +1281,7 @@ body {
   #appScreen.profile-open .profile-panel {
     transform: translateX(0);
   }
-  .profile-panel-content { width: 100%; }
+  .profile-panel-content { width: 100% !important; }
 
   /* Панель вкладень на вузьких екранах: менші кнопки й відступи, щоб усе влазило по ширині */
   .message-form {

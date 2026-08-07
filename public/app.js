@@ -379,6 +379,7 @@
     pendingImageFile = file;
     imagePreviewImg.src = URL.createObjectURL(file);
     imagePreview.classList.remove('hidden');
+    updateSendButtonMode();
     return true;
   }
 
@@ -392,6 +393,7 @@
     pendingImageFile = null;
     imageInput.value = '';
     imagePreview.classList.add('hidden');
+    updateSendButtonMode();
   });
 
   // ---------- Вставка картинки з буфера обміну (Ctrl+V) ----------
@@ -440,12 +442,14 @@
     pendingAudioFile = file;
     audioPreviewName.textContent = '🎵 ' + file.name;
     audioPreview.classList.remove('hidden');
+    updateSendButtonMode();
   });
 
   cancelAudioBtn.addEventListener('click', () => {
     pendingAudioFile = null;
     audioInput.value = '';
     audioPreview.classList.add('hidden');
+    updateSendButtonMode();
   });
 
   // ---------- Прикріплення відео ----------
@@ -474,6 +478,7 @@
     pendingVideoFile = file;
     videoPreviewEl.src = URL.createObjectURL(file);
     videoPreview.classList.remove('hidden');
+    updateSendButtonMode();
   });
 
   cancelVideoBtn.addEventListener('click', () => {
@@ -482,6 +487,7 @@
     videoPreviewEl.pause();
     videoPreviewEl.removeAttribute('src');
     videoPreview.classList.add('hidden');
+    updateSendButtonMode();
   });
 
   async function uploadFile(file) {
@@ -593,6 +599,7 @@
       mediaStream.getTracks().forEach((t) => t.stop());
       clearInterval(recordingTimerId);
       messageFormEl.classList.remove('hidden');
+      updateSendButtonMode();
       recordingBar.classList.add('hidden');
 
       if (recordingCancelled || !recordedChunks.length) return;
@@ -948,18 +955,38 @@
   // ---------- Поле вводу, що росте (до ~4 рядків, далі скрол) ----------
 
   const messageInputEl = el('messageInput');
+  const sendBtn = el('sendBtn');
+
+  function updateSendButtonMode() {
+    const hasContent = !!messageInputEl.value.trim() || pendingImageFile || pendingAudioFile || pendingVideoFile;
+    sendBtn.textContent = hasContent ? '➤' : '🎙️';
+    sendBtn.title = hasContent ? 'Надіслати' : 'Записати голосове';
+    sendBtn.classList.toggle('mic-mode', !hasContent);
+  }
+  updateSendButtonMode();
 
   function autoResizeMessageInput() {
+    if (!messageInputEl.value) {
+      // Текст порожній — скидаємо висоту й прокрутку до початкового однорядкового стану
+      messageInputEl.style.height = '';
+      messageInputEl.scrollTop = 0;
+      return;
+    }
     messageInputEl.style.height = 'auto';
     messageInputEl.style.height = messageInputEl.scrollHeight + 'px';
   }
 
-  messageInputEl.addEventListener('input', autoResizeMessageInput);
+  messageInputEl.addEventListener('input', () => {
+    autoResizeMessageInput();
+    updateSendButtonMode();
+  });
 
   messageInputEl.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      el('messageForm').requestSubmit();
+      const hasContent = messageInputEl.value.trim() || pendingImageFile || pendingAudioFile || pendingVideoFile;
+      // Enter надсилає лише коли є що надсилати — не запускає запис голосового на порожньому полі
+      if (hasContent) el('messageForm').requestSubmit();
     }
   });
 
@@ -979,6 +1006,7 @@
       if (!state.activeChatId) return;
       insertTextAtCursor(el('messageInput'), s);
       autoResizeMessageInput();
+      updateSendButtonMode();
     });
     stickerPopover.appendChild(btn);
   });
@@ -1471,9 +1499,17 @@
 
   el('messageForm').addEventListener('submit', async (e) => {
     e.preventDefault();
+    if (!state.activeChatId) return;
     const input = el('messageInput');
     const text = input.value.trim();
-    if ((!text && !pendingImageFile && !pendingAudioFile && !pendingVideoFile) || !state.activeChatId) return;
+    const hasContent = text || pendingImageFile || pendingAudioFile || pendingVideoFile;
+
+    if (!hasContent) {
+      // Поле порожнє — кнопка зараз у режимі мікрофона, тож замість надсилання починаємо запис
+      startRecording();
+      return;
+    }
+
     stickerPopover.classList.add('hidden');
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
@@ -1510,6 +1546,7 @@
       videoPreviewEl.pause();
       videoPreviewEl.removeAttribute('src');
       videoPreview.classList.add('hidden');
+      updateSendButtonMode();
     } catch (err) {
       alert(err.message);
     } finally {

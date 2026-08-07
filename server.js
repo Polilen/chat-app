@@ -401,14 +401,20 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   if (!chat || (chat.user1_id !== req.user.id && chat.user2_id !== req.user.id)) {
     return res.status(403).json({ error: 'Немає доступу до цього чату' });
   }
+  const clearedAt = db.prepare(
+    'SELECT last_message_id as lastMessageId FROM chat_deletions WHERE chat_id = ? AND user_id = ?'
+  ).get(chatId, req.user.id);
+  const cutoffId = clearedAt ? clearedAt.lastMessageId : 0;
+
   const messages = db.prepare(`
     SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl,
            video_url as videoUrl, read_at as readAt, created_at as createdAt
     FROM messages
     WHERE chat_id = ?
+      AND id > ?
       AND id NOT IN (SELECT message_id FROM message_deletions WHERE user_id = ?)
     ORDER BY id ASC
-  `).all(chatId, req.user.id);
+  `).all(chatId, cutoffId, req.user.id);
 
   const reactionRows = db.prepare(`
     SELECT message_id as messageId, emoji, user_id as userId

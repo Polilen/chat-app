@@ -178,6 +178,10 @@
           <button type="button" id="changeAvatarBtn" class="modal-action-btn">🖼 Змінити аватарку</button>
           <button type="button" id="removeAvatarBtn" class="modal-action-btn danger">Видалити аватарку</button>
         </div>
+        <div id="settingsHistorySection" class="avatar-history-section hidden">
+          <span class="avatar-history-label">Історія аватарок</span>
+          <div id="settingsHistoryGrid" class="avatar-history-grid"></div>
+        </div>
         <label class="settings-toggle-row">
           <span>Показувати мою активність (був(ла) у мережі)</span>
           <input type="checkbox" id="showLastSeenToggle" checked>
@@ -258,6 +262,26 @@
         <div id="groupInfoMembersList" class="group-members-list"></div>
         <p id="groupInfoStatus" class="forward-status hidden" style="border:none"></p>
         <button type="button" id="groupLeaveBtn" class="modal-action-btn danger" style="width:100%;justify-content:center;margin-top:6px;">Покинути групу</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) -->
+  <div id="userProfileModal" class="forward-modal hidden">
+    <div class="modal-backdrop" data-close="userProfile"></div>
+    <div class="forward-modal-content settings-modal-content">
+      <div class="forward-modal-header">
+        <span>Профіль</span>
+        <button id="userProfileModalClose" class="icon-btn" data-close="userProfile">✕</button>
+      </div>
+      <div class="settings-body">
+        <div id="userProfileAvatar" class="avatar-slot avatar-slot-large"></div>
+        <div id="userProfileUsername" class="settings-username"></div>
+        <div id="userProfileHistorySection" class="avatar-history-section hidden">
+          <span class="avatar-history-label">Історія аватарок</span>
+          <div id="userProfileHistoryGrid" class="avatar-history-grid"></div>
+        </div>
+        <p id="userProfileStatus" class="forward-status hidden" style="border:none"></p>
       </div>
     </div>
   </div>

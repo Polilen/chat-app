@@ -282,6 +282,19 @@ app.get('/api/me', authMiddleware, (req, res) => {
   ).get(req.user.id);
   if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
   user.showLastSeen = !!user.showLastSeen;
+  user.avatarHistory = db.prepare(
+    'SELECT avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
+  ).all(req.user.id);
+  res.json({ user });
+});
+
+app.get('/api/users/:id', authMiddleware, (req, res) => {
+  const id = Number(req.params.id);
+  const user = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(id);
+  if (!user) return res.status(404).json({ error: 'Користувача не знайдено' });
+  user.avatarHistory = db.prepare(
+    'SELECT avatar_url as avatarUrl, created_at as createdAt FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC'
+  ).all(id);
   res.json({ user });
 });
 
@@ -297,14 +310,10 @@ app.post('/api/me/avatar', authMiddleware, (req, res) => {
     if (err) return res.status(400).json({ error: err.message });
     if (!req.file) return res.status(400).json({ error: 'Файл не передано' });
 
-    const old = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
     const avatarUrl = `/uploads/${req.file.filename}`;
     db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(avatarUrl, req.user.id);
-
-    if (old && old.avatar_url) {
-      const oldPath = path.join(UPLOAD_DIR, path.basename(old.avatar_url));
-      fs.unlink(oldPath, () => {});
-    }
+    // Стару аватарку більше не видаляємо з диска — зберігаємо в історії, щоб її можна було переглянути пізніше
+    db.prepare('INSERT INTO avatar_history (user_id, avatar_url) VALUES (?, ?)').run(req.user.id, avatarUrl);
 
     notifyChatPartnersAvatarChanged(req.user.id, avatarUrl);
     res.json({ avatarUrl });
@@ -312,12 +321,8 @@ app.post('/api/me/avatar', authMiddleware, (req, res) => {
 });
 
 app.delete('/api/me/avatar', authMiddleware, (req, res) => {
-  const old = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+  // Файл не видаляємо з диска — він лишається доступним в історії аватарок
   db.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').run(req.user.id);
-  if (old && old.avatar_url) {
-    const oldPath = path.join(UPLOAD_DIR, path.basename(old.avatar_url));
-    fs.unlink(oldPath, () => {});
-  }
   notifyChatPartnersAvatarChanged(req.user.id, null);
   res.json({ ok: true });
 });

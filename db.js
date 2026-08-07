@@ -93,6 +93,16 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_message_reads_message ON message_reads(message_id);
   CREATE INDEX IF NOT EXISTS idx_message_reads_user ON message_reads(user_id);
 
+  CREATE TABLE IF NOT EXISTS avatar_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    avatar_url TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    FOREIGN KEY(user_id) REFERENCES users(id)
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_avatar_history_user ON avatar_history(user_id);
+
   CREATE TABLE IF NOT EXISTS message_deletions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     message_id INTEGER NOT NULL,
@@ -188,5 +198,17 @@ if (user1Col && (user1Col.notnull === 1 || !hasGroupColumns)) {
 }
 
 db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_chats_pair ON chats(user1_id, user2_id) WHERE is_group = 0;');
+
+// Для аватарок, завантажених до появи історії — додаємо їх туди заднім числом,
+// щоб вони теж були видні в профілі
+const usersWithAvatarNoHistory = db.prepare(`
+  SELECT id, avatar_url FROM users
+  WHERE avatar_url IS NOT NULL
+    AND id NOT IN (SELECT DISTINCT user_id FROM avatar_history)
+`).all();
+if (usersWithAvatarNoHistory.length) {
+  const insertHistory = db.prepare('INSERT INTO avatar_history (user_id, avatar_url) VALUES (?, ?)');
+  usersWithAvatarNoHistory.forEach((u) => insertHistory.run(u.id, u.avatar_url));
+}
 
 module.exports = db;

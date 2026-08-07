@@ -1442,6 +1442,38 @@ body {
 }
 .settings-actions .modal-action-btn { width: 100%; justify-content: center; }
 
+.avatar-history-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.avatar-history-label {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.avatar-history-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 6px;
+}
+
+.avatar-history-item {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.12s, transform 0.12s;
+}
+.avatar-history-item:hover { border-color: var(--accent); transform: scale(1.05); }
+.avatar-history-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
 .delete-choice-content { width: min(300px, 92vw); }
 
 .delete-choice-body {

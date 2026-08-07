@@ -759,8 +759,8 @@
       statusEl.textContent = pluralizeMembers(state.activeGroup.memberCount);
       statusEl.classList.remove('online');
     } else if (state.activeChatWith) {
-      infoEl.classList.remove('clickable');
-      infoEl.onclick = null;
+      infoEl.classList.add('clickable');
+      infoEl.onclick = () => openUserProfileModal(state.activeChatWith.id);
       el('chatWithUsername').classList.remove('group-title');
       el('chatWithUsername').textContent = state.activeChatWith.username;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, state.activeChatWith.avatarUrl);
@@ -1752,6 +1752,7 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
+    else if (!userProfileModal.classList.contains('hidden')) closeUserProfileModal();
     else if (!groupInfoModal.classList.contains('hidden')) closeGroupInfoModal();
     else if (!createGroupModal.classList.contains('hidden')) closeCreateGroupModal();
     else if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
@@ -1777,13 +1778,72 @@
   const removeAvatarBtn = el('removeAvatarBtn');
   const showLastSeenToggle = el('showLastSeenToggle');
 
+  function renderAvatarHistoryGrid(gridEl, sectionEl, history) {
+    gridEl.innerHTML = '';
+    if (!history || !history.length) {
+      sectionEl.classList.add('hidden');
+      return;
+    }
+    sectionEl.classList.remove('hidden');
+    history.forEach((h) => {
+      const item = document.createElement('div');
+      item.className = 'avatar-history-item';
+      item.title = formatExactDateTime(h.createdAt);
+      const img = document.createElement('img');
+      img.src = h.avatarUrl;
+      img.alt = '';
+      item.appendChild(img);
+      item.addEventListener('click', () => openMediaModal(h.avatarUrl, 'image'));
+      gridEl.appendChild(item);
+    });
+  }
+
+  const settingsHistorySection = el('settingsHistorySection');
+  const settingsHistoryGrid = el('settingsHistoryGrid');
+
   function openSettingsModal() {
     settingsStatus.classList.add('hidden');
     settingsUsername.textContent = state.user.username;
     renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
     showLastSeenToggle.checked = state.user.showLastSeen !== false;
+    settingsHistorySection.classList.add('hidden');
     settingsModal.classList.remove('hidden');
+    api('/api/me').then(({ user }) => {
+      renderAvatarHistoryGrid(settingsHistoryGrid, settingsHistorySection, user.avatarHistory);
+    }).catch(() => {});
   }
+
+  // ---------- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) ----------
+
+  const userProfileModal = el('userProfileModal');
+  const userProfileAvatar = el('userProfileAvatar');
+  const userProfileUsername = el('userProfileUsername');
+  const userProfileHistorySection = el('userProfileHistorySection');
+  const userProfileHistoryGrid = el('userProfileHistoryGrid');
+  const userProfileStatus = el('userProfileStatus');
+
+  async function openUserProfileModal(userId) {
+    userProfileStatus.classList.add('hidden');
+    userProfileHistorySection.classList.add('hidden');
+    userProfileAvatar.innerHTML = '';
+    userProfileUsername.textContent = '';
+    userProfileModal.classList.remove('hidden');
+    try {
+      const { user } = await api(`/api/users/${userId}`);
+      renderAvatarInto(userProfileAvatar, user.username, user.avatarUrl);
+      userProfileUsername.textContent = user.username;
+      renderAvatarHistoryGrid(userProfileHistoryGrid, userProfileHistorySection, user.avatarHistory);
+    } catch (err) {
+      userProfileStatus.textContent = err.message;
+      userProfileStatus.classList.remove('hidden');
+    }
+  }
+
+  function closeUserProfileModal() {
+    userProfileModal.classList.add('hidden');
+  }
+
+  document.querySelectorAll('[data-close="userProfile"]').forEach((btn) => btn.addEventListener('click', closeUserProfileModal));
 
   showLastSeenToggle.addEventListener('change', async () => {
     const value = showLastSeenToggle.checked;

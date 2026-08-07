@@ -540,7 +540,6 @@
       if (action === 'image') imageInput.click();
       else if (action === 'video') videoInput.click();
       else if (action === 'audio') audioInput.click();
-      else if (action === 'voice') startRecording();
     });
   });
 

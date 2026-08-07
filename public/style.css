@@ -418,6 +418,47 @@ body {
   position: relative;
 }
 
+.attach-control {
+  position: relative;
+}
+
+.attach-menu {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  left: 0;
+  width: 190px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 6px;
+  z-index: 20;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transform-origin: left bottom;
+}
+.attach-menu.hidden { display: none; }
+.attach-menu.animate-in {
+  animation: popover-pop-in 0.16s cubic-bezier(0.2, 0.9, 0.4, 1.2) forwards;
+}
+
+.attach-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 13.5px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+.attach-menu-item span { font-size: 17px; width: 20px; text-align: center; }
+.attach-menu-item:hover { background: var(--bg-panel); }
+
 .sticker-popover {
   position: absolute;
   bottom: calc(100% + 10px);
@@ -668,7 +709,7 @@ body {
 
 .message-form {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 10px;
   padding: 16px 24px;
   border-top: 1px solid var(--border);
@@ -961,7 +1002,8 @@ body {
   flex-shrink: 0;
 }
 
-.message-form input {
+.message-form input,
+.message-form textarea {
   flex: 1;
   min-width: 0;
   background: var(--bg-elevated);
@@ -972,10 +1014,20 @@ body {
   font-size: 14px;
   outline: none;
 }
-.message-form input:focus { border-color: var(--accent); }
+.message-form input:focus,
+.message-form textarea:focus { border-color: var(--accent); }
 
-.message-form button {
+.message-form textarea {
+  resize: none;
+  font-family: inherit;
+  line-height: 20px;
+  max-height: 104px; /* ~4 рядки */
+  overflow-y: auto;
+}
+
+.message-form button[type="submit"] {
   width: 44px;
+  padding: 12px 0;
   border-radius: 10px;
   border: none;
   background: var(--accent);
@@ -983,7 +1035,7 @@ body {
   font-size: 16px;
   cursor: pointer;
 }
-.message-form button:hover { background: #45e4c1; }
+.message-form button[type="submit"]:hover { background: #45e4c1; }
 
 .chat-back-btn {
   display: none;
@@ -1009,7 +1061,8 @@ body {
     font-size: 15px;
     border-radius: 8px;
   }
-  .message-form input {
+  .message-form input,
+  .message-form textarea {
     padding: 10px 10px;
     font-size: 14px;
   }

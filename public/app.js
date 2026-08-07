@@ -359,14 +359,11 @@
 
   // ---------- Прикріплення картинки ----------
 
-  const attachBtn = el('attachBtn');
   const imageInput = el('imageInput');
   const imagePreview = el('imagePreview');
   const imagePreviewImg = el('imagePreviewImg');
   const cancelImageBtn = el('cancelImageBtn');
   let pendingImageFile = null;
-
-  attachBtn.addEventListener('click', () => imageInput.click());
 
   function setPendingImage(file) {
     if (file.size > 8 * 1024 * 1024) {
@@ -420,14 +417,11 @@
 
   // ---------- Прикріплення аудіо ----------
 
-  const attachAudioBtn = el('attachAudioBtn');
   const audioInput = el('audioInput');
   const audioPreview = el('audioPreview');
   const audioPreviewName = el('audioPreviewName');
   const cancelAudioBtn = el('cancelAudioBtn');
   let pendingAudioFile = null;
-
-  attachAudioBtn.addEventListener('click', () => audioInput.click());
 
   audioInput.addEventListener('change', () => {
     const file = audioInput.files[0];
@@ -456,15 +450,12 @@
 
   // ---------- Прикріплення відео ----------
 
-  const attachVideoBtn = el('attachVideoBtn');
   const videoInput = el('videoInput');
   const videoPreview = el('videoPreview');
   const videoPreviewEl = el('videoPreviewEl');
   const cancelVideoBtn = el('cancelVideoBtn');
   const MAX_VIDEO_BYTES = 500 * 1024 * 1024;
   let pendingVideoFile = null;
-
-  attachVideoBtn.addEventListener('click', () => videoInput.click());
 
   videoInput.addEventListener('change', () => {
     const file = videoInput.files[0];
@@ -506,9 +497,46 @@
     return data;
   }
 
-  // ---------- Запис голосового ----------
+  // ---------- Меню вкладень (скріпка) ----------
 
-  const recordBtn = el('recordBtn');
+  const attachControlBtn = el('attachBtn');
+  const attachMenu = el('attachMenu');
+
+  function openAttachMenu() {
+    attachMenu.classList.remove('hidden', 'animate-in');
+    void attachMenu.offsetWidth;
+    attachMenu.classList.add('animate-in');
+  }
+
+  function closeAttachMenu() {
+    attachMenu.classList.add('hidden');
+    attachMenu.classList.remove('animate-in');
+  }
+
+  attachControlBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (attachMenu.classList.contains('hidden')) openAttachMenu();
+    else closeAttachMenu();
+  });
+
+  attachMenu.querySelectorAll('.attach-menu-item').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.action;
+      closeAttachMenu();
+      if (action === 'image') imageInput.click();
+      else if (action === 'video') videoInput.click();
+      else if (action === 'audio') audioInput.click();
+      else if (action === 'voice') startRecording();
+    });
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!attachMenu.classList.contains('hidden') && !attachMenu.contains(e.target) && e.target !== attachControlBtn) {
+      closeAttachMenu();
+    }
+  });
+
+
   const recordingBar = el('recordingBar');
   const recordingTime = el('recordingTime');
   const recordCancelBtn = el('recordCancelBtn');
@@ -603,15 +631,6 @@
       alert(err.message);
     }
   }
-
-  recordBtn.addEventListener('click', () => {
-    if (!state.activeChatId) return;
-    if (mediaRecorder && mediaRecorder.state === 'recording') {
-      stopRecording(false);
-    } else {
-      startRecording();
-    }
-  });
 
   recordSendBtn.addEventListener('click', () => stopRecording(false));
   recordCancelBtn.addEventListener('click', () => stopRecording(true));
@@ -926,6 +945,24 @@
     if (e.key === 'Escape') closeMessageMenu();
   });
 
+  // ---------- Поле вводу, що росте (до ~4 рядків, далі скрол) ----------
+
+  const messageInputEl = el('messageInput');
+
+  function autoResizeMessageInput() {
+    messageInputEl.style.height = 'auto';
+    messageInputEl.style.height = messageInputEl.scrollHeight + 'px';
+  }
+
+  messageInputEl.addEventListener('input', autoResizeMessageInput);
+
+  messageInputEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      el('messageForm').requestSubmit();
+    }
+  });
+
   // ---------- Стікери ----------
 
   const STICKERS = ['😀', '😂', '😍', '🥰', '😭', '😡', '😱', '😴', '🤔', '🥳', '👍', '👎', '👏', '🙏', '💯', '🎉', '🔥', '❤️', '💔', '👀'];
@@ -941,6 +978,7 @@
     btn.addEventListener('click', () => {
       if (!state.activeChatId) return;
       insertTextAtCursor(el('messageInput'), s);
+      autoResizeMessageInput();
     });
     stickerPopover.appendChild(btn);
   });
@@ -1460,6 +1498,7 @@
         if (ack && ack.error) console.error(ack.error);
       });
       input.value = '';
+      autoResizeMessageInput();
       pendingImageFile = null;
       imageInput.value = '';
       imagePreview.classList.add('hidden');

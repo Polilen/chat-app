@@ -681,7 +681,6 @@
     }
     inner += '</span>';
     inner += '<div class="msg-reactions"></div>';
-    inner += '<div class="msg-actions"></div>';
 
     div.innerHTML = inner;
 
@@ -720,31 +719,6 @@
       div.dataset.audioUrl = audioUrl;
     }
 
-    const actions = div.querySelector('.msg-actions');
-    const forwardIcon = document.createElement('button');
-    forwardIcon.type = 'button';
-    forwardIcon.className = 'msg-action-icon';
-    forwardIcon.title = 'Переслати';
-    forwardIcon.textContent = '↪';
-    forwardIcon.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openForwardModal([{ text, imageUrl: imageUrl || null, audioUrl: audioUrl || null, videoUrl: videoUrl || null }]);
-    });
-    actions.appendChild(forwardIcon);
-
-    if (mine && messageId != null) {
-      const deleteIcon = document.createElement('button');
-      deleteIcon.type = 'button';
-      deleteIcon.className = 'msg-action-icon danger';
-      deleteIcon.title = 'Видалити';
-      deleteIcon.textContent = '🗑';
-      deleteIcon.addEventListener('click', (e) => {
-        e.stopPropagation();
-        deleteMessages([messageId]);
-      });
-      actions.appendChild(deleteIcon);
-    }
-
     div.addEventListener('click', () => {
       if (!state.selectionMode || messageId == null) return;
       toggleMessageSelect(messageId, div);
@@ -754,7 +728,14 @@
       div.addEventListener('contextmenu', (e) => {
         if (state.selectionMode) return;
         e.preventDefault();
-        openReactionPopover(e.clientX, e.clientY, messageId);
+        openMessageMenu(e.clientX, e.clientY, div, {
+          messageId,
+          mine,
+          text,
+          imageUrl: imageUrl || null,
+          audioUrl: audioUrl || null,
+          videoUrl: videoUrl || null,
+        });
       });
       renderReactions(div, msg.reactions || []);
     }
@@ -792,8 +773,17 @@
     });
   }
 
-  function openReactionPopover(x, y, messageId) {
+  let contextMenuTargetDiv = null;
+
+  function openMessageMenu(x, y, msgDiv, info) {
+    closeMessageMenu();
+    contextMenuTargetDiv = msgDiv;
+    msgDiv.classList.add('context-active');
+
     reactionPopover.innerHTML = '';
+
+    const emojiRow = document.createElement('div');
+    emojiRow.className = 'context-menu-emojis';
     REACTIONS.forEach((emoji) => {
       const btn = document.createElement('button');
       btn.type = 'button';
@@ -801,12 +791,43 @@
       btn.textContent = emoji;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
-        sendReaction(messageId, emoji);
-        closeReactionPopover();
+        sendReaction(info.messageId, emoji);
+        closeMessageMenu();
       });
-      reactionPopover.appendChild(btn);
+      emojiRow.appendChild(btn);
     });
-    reactionPopover.classList.remove('hidden');
+    reactionPopover.appendChild(emojiRow);
+
+    const actionsRow = document.createElement('div');
+    actionsRow.className = 'context-menu-actions';
+
+    const forwardBtn = document.createElement('button');
+    forwardBtn.type = 'button';
+    forwardBtn.className = 'context-menu-item';
+    forwardBtn.innerHTML = '<span>↪</span> Переслати';
+    forwardBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeMessageMenu();
+      openForwardModal([{ text: info.text, imageUrl: info.imageUrl, audioUrl: info.audioUrl, videoUrl: info.videoUrl }]);
+    });
+    actionsRow.appendChild(forwardBtn);
+
+    if (info.mine) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.type = 'button';
+      deleteBtn.className = 'context-menu-item danger';
+      deleteBtn.innerHTML = '<span>🗑</span> Видалити';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMessageMenu();
+        deleteMessages([info.messageId]);
+      });
+      actionsRow.appendChild(deleteBtn);
+    }
+
+    reactionPopover.appendChild(actionsRow);
+
+    reactionPopover.classList.remove('hidden', 'closing');
     // Спочатку показуємо, щоб дізнатись реальні розміри, потім позиціонуємо в межах екрана
     const rect = reactionPopover.getBoundingClientRect();
     let left = x - rect.width / 2;
@@ -815,19 +836,34 @@
     if (top < 8) top = y + 12;
     reactionPopover.style.left = `${left}px`;
     reactionPopover.style.top = `${top}px`;
+
+    // Перезапускаємо CSS-анімацію появи
+    reactionPopover.classList.remove('animate-in');
+    void reactionPopover.offsetWidth;
+    reactionPopover.classList.add('animate-in');
   }
 
-  function closeReactionPopover() {
-    reactionPopover.classList.add('hidden');
+  function closeMessageMenu() {
+    if (contextMenuTargetDiv) {
+      contextMenuTargetDiv.classList.remove('context-active');
+      contextMenuTargetDiv = null;
+    }
+    if (!reactionPopover.classList.contains('hidden')) {
+      reactionPopover.classList.add('hidden');
+    }
+    reactionPopover.classList.remove('animate-in');
   }
 
   document.addEventListener('click', (e) => {
     if (!reactionPopover.classList.contains('hidden') && !reactionPopover.contains(e.target)) {
-      closeReactionPopover();
+      closeMessageMenu();
     }
   });
   document.addEventListener('contextmenu', (e) => {
-    if (!e.target.closest('.msg')) closeReactionPopover();
+    if (!e.target.closest('.msg')) closeMessageMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeMessageMenu();
   });
 
   // ---------- Стікери ----------

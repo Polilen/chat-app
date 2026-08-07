@@ -1055,7 +1055,7 @@
         reads.forEach((r) => {
           const line = document.createElement('div');
           line.className = 'context-menu-read-line';
-          line.textContent = `${r.username} · ${formatTime(r.readAt)}`;
+          line.textContent = `${r.username} · ${formatExactDateTime(r.readAt)}`;
           box.appendChild(line);
         });
       }
@@ -1917,6 +1917,21 @@
     if (!iso) return '';
     const d = new Date(iso.includes('Z') || iso.includes('T') ? iso : iso.replace(' ', 'T') + 'Z');
     return d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function formatExactDateTime(iso) {
+    if (!iso) return '';
+    const d = parseServerDate(iso);
+    if (!d) return '';
+    const time = d.toLocaleTimeString('uk-UA', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const now = new Date();
+    const isSameDay = d.toDateString() === now.toDateString();
+    if (isSameDay) return `сьогодні о ${time}`;
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+    if (d.toDateString() === yesterday.toDateString()) return `вчора о ${time}`;
+    const dateStr = d.toLocaleDateString('uk-UA', { day: '2-digit', month: '2-digit', year: 'numeric' });
+    return `${dateStr} о ${time}`;
   }
 
   function parseServerDate(iso) {

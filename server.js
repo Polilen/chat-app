@@ -111,6 +111,15 @@ function otherUserId(chat, myId) {
   return chat.user1_id === myId ? chat.user2_id : chat.user1_id;
 }
 
+function groupReactions(rows) {
+  const byEmoji = {};
+  rows.forEach((r) => {
+    if (!byEmoji[r.emoji]) byEmoji[r.emoji] = [];
+    byEmoji[r.emoji].push(r.userId);
+  });
+  return Object.entries(byEmoji).map(([emoji, userIds]) => ({ emoji, userIds }));
+}
+
 function notifyChatPartnersAvatarChanged(userId, avatarUrl) {
   const partners = db.prepare(`
     SELECT DISTINCT CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
@@ -280,6 +289,21 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   const messages = db.prepare(
     'SELECT id, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE chat_id = ? ORDER BY id ASC'
   ).all(chatId);
+
+  const reactionRows = db.prepare(`
+    SELECT message_id as messageId, emoji, user_id as userId
+    FROM reactions
+    WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)
+  `).all(chatId);
+  const reactionsByMessage = {};
+  reactionRows.forEach((r) => {
+    if (!reactionsByMessage[r.messageId]) reactionsByMessage[r.messageId] = [];
+    reactionsByMessage[r.messageId].push({ emoji: r.emoji, userId: r.userId });
+  });
+  messages.forEach((m) => {
+    m.reactions = groupReactions(reactionsByMessage[m.id] || []);
+  });
+
   res.json({ messages });
 });
 
@@ -332,6 +356,56 @@ io.on('connection', (socket) => {
       io.to(`user:${otherId}`).emit('message:new', { ...message, withUser: senderInfo, from: senderInfo });
 
       if (ack) ack({ ok: true, message });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('reaction:set', (payload, ack) => {
+    try {
+      const { messageId, emoji } = payload || {};
+      const ALLOWED_REACTIONS = new Set(['❤️', '👍', '🔥']);
+      if (!messageId || !ALLOWED_REACTIONS.has(emoji)) {
+        if (ack) ack({ error: 'Недопустима реакція' });
+        return;
+      }
+      const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+      if (!message) {
+        if (ack) ack({ error: 'Повідомлення не знайдено' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(message.chat_id);
+      if (!chat || (chat.user1_id !== socket.user.id && chat.user2_id !== socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+
+      const existing = db.prepare(
+        'SELECT * FROM reactions WHERE message_id = ? AND user_id = ?'
+      ).get(messageId, socket.user.id);
+
+      if (existing && existing.emoji === emoji) {
+        // Той самий емодзі — знімаємо реакцію
+        db.prepare('DELETE FROM reactions WHERE id = ?').run(existing.id);
+      } else {
+        db.prepare(`
+          INSERT INTO reactions (message_id, user_id, emoji) VALUES (?, ?, ?)
+          ON CONFLICT(message_id, user_id) DO UPDATE SET emoji = excluded.emoji
+        `).run(messageId, socket.user.id, emoji);
+      }
+
+      const rows = db.prepare(
+        'SELECT emoji, user_id as userId FROM reactions WHERE message_id = ?'
+      ).all(messageId);
+      const reactions = groupReactions(rows);
+
+      const otherId = otherUserId(chat, socket.user.id);
+      const out = { chatId: chat.id, messageId, reactions };
+      io.to(`user:${socket.user.id}`).emit('reaction:updated', out);
+      io.to(`user:${otherId}`).emit('reaction:updated', out);
+
+      if (ack) ack({ ok: true, reactions });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

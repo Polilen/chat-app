@@ -367,6 +367,102 @@ body {
   margin-bottom: 8px;
 }
 
+/* ---------- Стікери ---------- */
+
+.sticker-control {
+  position: relative;
+}
+
+.sticker-popover {
+  position: absolute;
+  bottom: calc(100% + 10px);
+  right: 0;
+  width: 220px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px;
+  z-index: 20;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.4);
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 4px;
+}
+
+.sticker-item {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  padding: 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.sticker-item:hover { background: var(--bg-panel); }
+
+.msg.msg-sticker {
+  background: none;
+  padding: 0;
+  box-shadow: none;
+}
+.msg.msg-sticker .msg-text {
+  font-size: 56px;
+  line-height: 1;
+  display: block;
+}
+.msg.msg-sticker .msg-time-row {
+  justify-content: flex-end;
+}
+
+/* ---------- Реакції ---------- */
+
+.msg-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.msg-reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 12px;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.msg-reaction-pill.mine {
+  border-color: var(--accent);
+  background: rgba(51,214,176,0.15);
+}
+
+.reaction-popover {
+  position: fixed;
+  z-index: 200;
+  display: flex;
+  gap: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0,0,0,0.5);
+}
+
+.reaction-popover-item {
+  background: none;
+  border: none;
+  font-size: 22px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.reaction-popover-item:hover { background: var(--bg-panel); transform: scale(1.15); }
+
 .select-mode-btn {
   font-size: 16px;
 }

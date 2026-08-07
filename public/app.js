@@ -194,6 +194,11 @@
         renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
       }
     });
+    state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
+      if (state.activeChatId !== chatId) return;
+      const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
+      if (node) renderReactions(node, reactions);
+    });
     state.socket.on('connect_error', (err) => {
       console.error('Помилка сокета:', err.message);
     });
@@ -588,6 +593,7 @@
         audioUrl: m.audioUrl,
         videoUrl: m.videoUrl,
         readAt: m.readAt,
+        reactions: m.reactions,
         createdAt: m.createdAt,
       }));
       scrollMessagesToBottom();
@@ -602,16 +608,18 @@
     const mine = msg.senderId === state.user.id || msg.sender_id === state.user.id;
     const messageId = msg.id;
     const div = document.createElement('div');
-    div.className = 'msg ' + (mine ? 'mine' : 'theirs');
+    const imageUrl = msg.imageUrl || msg.image_url;
+    const audioUrl = msg.audioUrl || msg.audio_url;
+    const videoUrl = msg.videoUrl || msg.video_url;
+    const text = msg.text || '';
+    const isSticker = STICKERS.includes(text.trim()) && !imageUrl && !audioUrl && !videoUrl;
+
+    div.className = 'msg ' + (mine ? 'mine' : 'theirs') + (isSticker ? ' msg-sticker' : '');
     if (messageId != null) {
       div.dataset.id = messageId;
       div.dataset.senderId = msg.senderId ?? msg.sender_id ?? '';
     }
     const time = formatTime(msg.createdAt || msg.created_at);
-    const imageUrl = msg.imageUrl || msg.image_url;
-    const audioUrl = msg.audioUrl || msg.audio_url;
-    const videoUrl = msg.videoUrl || msg.video_url;
-    const text = msg.text || '';
 
     let inner = '<div class="msg-checkbox"></div>';
     if (imageUrl) {
@@ -633,6 +641,7 @@
       inner += `<span class="msg-status${isRead ? ' read' : ''}">${isRead ? '✓✓' : '✓'}</span>`;
     }
     inner += '</span>';
+    inner += '<div class="msg-reactions"></div>';
     inner += '<div class="msg-actions"></div>';
 
     div.innerHTML = inner;
@@ -702,8 +711,118 @@
       toggleMessageSelect(messageId, div);
     });
 
+    if (messageId != null) {
+      div.addEventListener('contextmenu', (e) => {
+        if (state.selectionMode) return;
+        e.preventDefault();
+        openReactionPopover(e.clientX, e.clientY, messageId);
+      });
+      renderReactions(div, msg.reactions || []);
+    }
+
     messagesEl.appendChild(div);
   }
+
+  // ---------- Реакції на повідомлення ----------
+
+  const REACTIONS = ['❤️', '👍', '🔥'];
+  const reactionPopover = el('reactionPopover');
+
+  function renderReactions(div, reactions) {
+    const box = div.querySelector('.msg-reactions');
+    if (!box) return;
+    box.innerHTML = '';
+    reactions.forEach((r) => {
+      const mine = r.userIds && r.userIds.includes(state.user.id);
+      const pill = document.createElement('button');
+      pill.type = 'button';
+      pill.className = 'msg-reaction-pill' + (mine ? ' mine' : '');
+      pill.textContent = `${r.emoji} ${r.userIds.length}`;
+      pill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (state.selectionMode) return;
+        sendReaction(div.dataset.id, r.emoji);
+      });
+      box.appendChild(pill);
+    });
+  }
+
+  function sendReaction(messageId, emoji) {
+    state.socket.emit('reaction:set', { messageId: Number(messageId), emoji }, (ack) => {
+      if (ack && ack.error) console.error(ack.error);
+    });
+  }
+
+  function openReactionPopover(x, y, messageId) {
+    reactionPopover.innerHTML = '';
+    REACTIONS.forEach((emoji) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'reaction-popover-item';
+      btn.textContent = emoji;
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        sendReaction(messageId, emoji);
+        closeReactionPopover();
+      });
+      reactionPopover.appendChild(btn);
+    });
+    reactionPopover.classList.remove('hidden');
+    // Спочатку показуємо, щоб дізнатись реальні розміри, потім позиціонуємо в межах екрана
+    const rect = reactionPopover.getBoundingClientRect();
+    let left = x - rect.width / 2;
+    let top = y - rect.height - 12;
+    left = Math.max(8, Math.min(left, window.innerWidth - rect.width - 8));
+    if (top < 8) top = y + 12;
+    reactionPopover.style.left = `${left}px`;
+    reactionPopover.style.top = `${top}px`;
+  }
+
+  function closeReactionPopover() {
+    reactionPopover.classList.add('hidden');
+  }
+
+  document.addEventListener('click', (e) => {
+    if (!reactionPopover.classList.contains('hidden') && !reactionPopover.contains(e.target)) {
+      closeReactionPopover();
+    }
+  });
+  document.addEventListener('contextmenu', (e) => {
+    if (!e.target.closest('.msg')) closeReactionPopover();
+  });
+
+  // ---------- Стікери ----------
+
+  const STICKERS = ['😀', '😂', '😍', '🥰', '😭', '😡', '😱', '😴', '🤔', '🥳', '👍', '👎', '👏', '🙏', '💯', '🎉', '🔥', '❤️', '💔', '👀'];
+
+  const stickerBtn = el('stickerBtn');
+  const stickerPopover = el('stickerPopover');
+
+  STICKERS.forEach((s) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'sticker-item';
+    btn.textContent = s;
+    btn.addEventListener('click', () => {
+      if (!state.activeChatId) return;
+      state.socket.emit('message:send', { chatId: state.activeChatId, text: s }, (ack) => {
+        if (ack && ack.error) console.error(ack.error);
+      });
+      stickerPopover.classList.add('hidden');
+    });
+    stickerPopover.appendChild(btn);
+  });
+
+  stickerBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    stickerPopover.classList.toggle('hidden');
+  });
+
+  document.addEventListener('click', (e) => {
+    if (!stickerPopover.classList.contains('hidden') && !stickerPopover.contains(e.target) && e.target !== stickerBtn) {
+      stickerPopover.classList.add('hidden');
+    }
+  });
 
   // ---------- Кастомний аудіоплеєр (один активний одночасно) ----------
 

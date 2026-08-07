@@ -116,6 +116,10 @@
           <button type="button" id="attachVideoBtn" class="attach-btn" title="Додати відео">🎬</button>
           <button type="button" id="recordBtn" class="attach-btn" title="Записати голосове">🎙️</button>
           <input type="text" id="messageInput" placeholder="Повідомлення…" autocomplete="off">
+          <div class="sticker-control">
+            <button type="button" id="stickerBtn" class="attach-btn" title="Стікери">😊</button>
+            <div id="stickerPopover" class="sticker-popover hidden"></div>
+          </div>
           <button type="submit">➤</button>
         </form>
       </div>
@@ -169,6 +173,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Реакції на повідомлення (правий клік) -->
+  <div id="reactionPopover" class="reaction-popover hidden"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/app.js"></script>

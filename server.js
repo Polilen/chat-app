@@ -344,10 +344,30 @@ app.post('/api/me/avatar', authMiddleware, (req, res) => {
 });
 
 app.delete('/api/me/avatar', authMiddleware, (req, res) => {
-  // Файл не видаляємо з диска — він лишається доступним в історії аватарок
-  db.prepare('UPDATE users SET avatar_url = NULL WHERE id = ?').run(req.user.id);
-  notifyChatPartnersAvatarChanged(req.user.id, null);
-  res.json({ ok: true });
+  const user = db.prepare('SELECT avatar_url FROM users WHERE id = ?').get(req.user.id);
+  if (!user || !user.avatar_url) {
+    return res.json({ ok: true, avatarUrl: null });
+  }
+
+  // Видалення поточної аватарки тепер прибирає її й з історії остаточно —
+  // і підставляє попередню (як і видалення конкретного фото в історії), а не просто скидає в "немає аватарки"
+  const currentRow = db.prepare(
+    'SELECT * FROM avatar_history WHERE user_id = ? AND avatar_url = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(req.user.id, user.avatar_url);
+
+  if (currentRow) {
+    db.prepare('DELETE FROM avatar_history WHERE id = ?').run(currentRow.id);
+    fs.unlink(path.join(UPLOAD_DIR, path.basename(currentRow.avatar_url)), () => {});
+  }
+
+  const previous = db.prepare(
+    'SELECT avatar_url FROM avatar_history WHERE user_id = ? ORDER BY created_at DESC LIMIT 1'
+  ).get(req.user.id);
+  const newAvatarUrl = previous ? previous.avatar_url : null;
+
+  db.prepare('UPDATE users SET avatar_url = ? WHERE id = ?').run(newAvatarUrl, req.user.id);
+  notifyChatPartnersAvatarChanged(req.user.id, newAvatarUrl);
+  res.json({ ok: true, avatarUrl: newAvatarUrl });
 });
 
 app.post('/api/upload', authMiddleware, (req, res) => {

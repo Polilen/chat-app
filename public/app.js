@@ -1995,20 +1995,21 @@
       showSettingsStatus('Аватарки ще немає');
       return;
     }
-    if (!confirm('Видалити аватарку?')) return;
+    if (!confirm('Видалити поточну аватарку назавжди?')) return;
     removeAvatarBtn.disabled = true;
     try {
       const res = await fetch('/api/me/avatar', {
         method: 'DELETE',
         headers: { Authorization: 'Bearer ' + state.token },
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || 'Не вдалося видалити аватарку');
-      }
-      state.user.avatarUrl = null;
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || 'Не вдалося видалити аватарку');
+      // Тепер сервер сам повертає попередню аватарку з історії (якщо є), а не завжди null
+      state.user.avatarUrl = data.avatarUrl;
       persistUser();
-      showSettingsStatus('Аватарку видалено');
+      showSettingsStatus(data.avatarUrl ? 'Аватарку видалено, встановлено попередню' : 'Аватарку видалено');
+      const me = await api('/api/me');
+      renderAvatarHistoryGrid(settingsHistoryGrid, settingsHistorySection, me.user.avatarHistory);
     } catch (err) {
       showSettingsStatus(err.message);
     } finally {

@@ -124,7 +124,11 @@ function getParticipantIds(chat, excludeUserId) {
     const rows = db.prepare('SELECT user_id FROM chat_members WHERE chat_id = ?').all(chat.id);
     return rows.map((r) => r.user_id).filter((id) => id !== excludeUserId);
   }
-  return [otherUserId(chat, excludeUserId)];
+  // Для 1:1 чату: excludeUserId === null/undefined означає "всі учасники" (обидва),
+  // а не "виключити нікого, кому дорівнює null" — раніше тут була помилка,
+  // через яку otherUserId(chat, null) завжди повертав user1_id замість обох сторін
+  const ids = [chat.user1_id, chat.user2_id];
+  return excludeUserId == null ? ids : ids.filter((id) => id !== excludeUserId);
 }
 
 function getMemberCount(chatId) {
@@ -647,7 +651,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   const messages = db.prepare(`
     SELECT m.id, m.sender_id as senderId, u.username as senderUsername, u.avatar_url as senderAvatarUrl,
            m.text, m.image_url as imageUrl, m.audio_url as audioUrl,
-           m.video_url as videoUrl, m.read_at as readAt, m.created_at as createdAt
+           m.video_url as videoUrl, m.read_at as readAt, m.edited_at as editedAt, m.created_at as createdAt
     FROM messages m
     JOIN users u ON u.id = m.sender_id
     WHERE m.chat_id = ?
@@ -774,7 +778,7 @@ io.on('connection', (socket) => {
         'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url, video_url) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl, cleanVideoUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, edited_at as editedAt, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const senderRow = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(socket.user.id);
@@ -890,6 +894,44 @@ io.on('connection', (socket) => {
       }
 
       if (ack) ack({ ok: true, count: toMark.length });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('message:edit', (payload, ack) => {
+    try {
+      const { messageId, text } = payload || {};
+      const cleanText = String(text || '').trim();
+      if (!messageId || !cleanText) {
+        if (ack) ack({ error: 'Текст не може бути порожнім' });
+        return;
+      }
+      const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(messageId);
+      if (!message) {
+        if (ack) ack({ error: 'Повідомлення не знайдено' });
+        return;
+      }
+      if (message.sender_id !== socket.user.id) {
+        if (ack) ack({ error: 'Можна редагувати лише власні повідомлення' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(message.chat_id);
+      if (!chat || !isParticipant(chat, socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+
+      db.prepare("UPDATE messages SET text = ?, edited_at = datetime('now') WHERE id = ?").run(cleanText, messageId);
+      const editedAt = db.prepare('SELECT edited_at FROM messages WHERE id = ?').get(messageId).edited_at;
+
+      const out = { chatId: chat.id, messageId, text: cleanText, editedAt };
+      getParticipantIds(chat, null).forEach((uid) => {
+        io.to(`user:${uid}`).emit('message:edited', out);
+      });
+
+      if (ack) ack({ ok: true, text: cleanText, editedAt });
     } catch (err) {
       console.error(err);
       if (ack) ack({ error: 'Помилка сервера' });

@@ -1077,6 +1077,28 @@ body {
   flex-shrink: 0;
 }
 
+.edit-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-elevated);
+  flex-shrink: 0;
+}
+.edit-bar-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.msg-edited-mark {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
 .recording-dot {
   width: 10px;
   height: 10px;

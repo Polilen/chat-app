@@ -14,6 +14,7 @@
     activeChatId: null,
     activeChatWith: null,
     activeChatIsGroup: false,
+    editingMessageId: null,
     activeGroup: null,
     chats: [],
     socket: null,
@@ -196,6 +197,12 @@
           node.classList.add('read');
         }
       });
+    });
+    state.socket.on('message:edited', ({ chatId, messageId, text, editedAt }) => {
+      if (state.activeChatId !== chatId) return;
+      const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
+      if (node) applyEditedTextToNode(node, text, editedAt);
+      loadChats();
     });
     state.socket.on('message:deleted', ({ chatId, messageIds }) => {
       if (state.activeChatId === chatId) {
@@ -576,6 +583,43 @@
   const recordSendBtn = el('recordSendBtn');
   const messageFormEl = el('messageForm');
 
+  // ---------- Редагування повідомлення ----------
+
+  const editBar = el('editBar');
+  const cancelEditBtn = el('cancelEditBtn');
+
+  function startEditMessage(messageId, currentText) {
+    // Редагування стосується лише тексту — прибираємо будь-які прикріплені файли, що чекають відправки
+    pendingImageFile = null;
+    imageInput.value = '';
+    imagePreview.classList.add('hidden');
+    pendingAudioFile = null;
+    audioInput.value = '';
+    audioPreview.classList.add('hidden');
+    pendingVideoFile = null;
+    videoInput.value = '';
+    videoPreviewEl.pause();
+    videoPreviewEl.removeAttribute('src');
+    videoPreview.classList.add('hidden');
+
+    state.editingMessageId = messageId;
+    messageInputEl.value = currentText || '';
+    autoResizeMessageInput();
+    updateSendButtonMode();
+    editBar.classList.remove('hidden');
+    messageInputEl.focus();
+  }
+
+  function cancelEditMessage() {
+    state.editingMessageId = null;
+    messageInputEl.value = '';
+    autoResizeMessageInput();
+    updateSendButtonMode();
+    editBar.classList.add('hidden');
+  }
+
+  cancelEditBtn.addEventListener('click', cancelEditMessage);
+
   let mediaRecorder = null;
   let mediaStream = null;
   let recordedChunks = [];
@@ -685,6 +729,7 @@
 
   async function openChat(entry) {
     pauseAllAudio();
+    cancelEditMessage();
     const chatId = entry.chatId;
     state.activeChatId = chatId;
     state.activeChatIsGroup = !!entry.isGroup;
@@ -731,6 +776,7 @@
         audioUrl: m.audioUrl,
         videoUrl: m.videoUrl,
         readAt: m.readAt,
+        editedAt: m.editedAt,
         reactions: m.reactions,
         createdAt: m.createdAt,
       }));
@@ -774,6 +820,27 @@
     }
   }
 
+  function applyEditedTextToNode(node, text, editedAt) {
+    let textSpan = node.querySelector('.msg-text');
+    if (textSpan) {
+      textSpan.textContent = text;
+    } else if (text) {
+      textSpan = document.createElement('span');
+      textSpan.className = 'msg-text';
+      textSpan.textContent = text;
+      const timeRow = node.querySelector('.msg-time-row');
+      node.insertBefore(textSpan, timeRow);
+    }
+    if (editedAt && !node.querySelector('.msg-edited-mark')) {
+      const mark = document.createElement('span');
+      mark.className = 'msg-edited-mark';
+      mark.textContent = 'ред.';
+      mark.title = formatExactDateTime(editedAt);
+      const timeRow = node.querySelector('.msg-time-row');
+      timeRow.insertBefore(mark, timeRow.firstChild);
+    }
+  }
+
   function appendMessage(msg) {
     if (msg.chatId !== state.activeChatId) return;
     const mine = msg.senderId === state.user.id || msg.sender_id === state.user.id;
@@ -812,6 +879,10 @@
       inner += `<span class="msg-text">${escapeHtml(text)}</span>`;
     }
     inner += '<span class="msg-time-row">';
+    const editedAtValue = msg.editedAt || msg.edited_at;
+    if (editedAtValue) {
+      inner += `<span class="msg-edited-mark" title="${escapeAttr(formatExactDateTime(editedAtValue))}">ред.</span>`;
+    }
     inner += `<span class="msg-time">${time}</span>`;
     if (mine) {
       const isRead = !!(msg.readAt || msg.read_at);
@@ -1033,6 +1104,17 @@
     actionsRow.appendChild(forwardBtn);
 
     if (info.mine) {
+      const editBtn = document.createElement('button');
+      editBtn.type = 'button';
+      editBtn.className = 'context-menu-item';
+      editBtn.innerHTML = '<span>✏️</span> Редагувати';
+      editBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeMessageMenu();
+        startEditMessage(info.messageId, info.text);
+      });
+      actionsRow.appendChild(editBtn);
+
       const seenBtn = document.createElement('button');
       seenBtn.type = 'button';
       seenBtn.className = 'context-menu-item';
@@ -1312,9 +1394,10 @@
 
   function updateSendButtonMode() {
     const hasContent = !!messageInputEl.value.trim() || pendingImageFile || pendingAudioFile || pendingVideoFile;
-    sendBtn.textContent = hasContent ? '➤' : '🎙️';
-    sendBtn.title = hasContent ? 'Надіслати' : 'Записати голосове';
-    sendBtn.classList.toggle('mic-mode', !hasContent);
+    const micMode = !hasContent && !state.editingMessageId;
+    sendBtn.textContent = micMode ? '🎙️' : '➤';
+    sendBtn.title = micMode ? 'Записати голосове' : (state.editingMessageId ? 'Зберегти' : 'Надіслати');
+    sendBtn.classList.toggle('mic-mode', micMode);
   }
   updateSendButtonMode();
 
@@ -2026,6 +2109,20 @@
     if (!state.activeChatId) return;
     const input = el('messageInput');
     const text = input.value.trim();
+
+    if (state.editingMessageId) {
+      if (!text) {
+        alert('Текст повідомлення не може бути порожнім');
+        return;
+      }
+      const editId = state.editingMessageId;
+      state.socket.emit('message:edit', { messageId: editId, text }, (ack) => {
+        if (ack && ack.error) alert(ack.error);
+      });
+      cancelEditMessage();
+      return;
+    }
+
     const hasContent = text || pendingImageFile || pendingAudioFile || pendingVideoFile;
 
     if (!hasContent) {

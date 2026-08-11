@@ -753,14 +753,14 @@
     sendChatActiveUpdate();
     renderChatList();
 
-    // Якщо панель профілю зараз відкрита — оновлюємо її на нового співрозмовника (для груп просто закриваємо)
-    if (userProfileModal.classList.contains('active')) {
-      if (entry.isGroup) closeUserProfileModal();
+    // Якщо відкрита панель профілю чи карточка групи — тримаємо її відкритою й перемикаємо
+    // на потрібний тип під новий чат (профіль ⇄ карточка групи), а не просто закриваємо.
+    // openUserProfileModal/openGroupInfoModal самі закривають протилежну панель — паралельні
+    // CSS-переходи ширини створюють плавне "перемикання" замість зникнення й появи заново
+    const infoPanelOpen = userProfileModal.classList.contains('active') || groupInfoModal.classList.contains('active');
+    if (infoPanelOpen) {
+      if (entry.isGroup) openGroupInfoModal(entry.chatId);
       else if (entry.withUser) openUserProfileModal(entry.withUser.id);
-    }
-    // Якщо відкрита карточка групи, а перемкнулись на інший чат — закриваємо її
-    if (groupInfoModal.classList.contains('active') && entry.chatId !== openGroupInfoChatId) {
-      closeGroupInfoModal();
     }
 
     // Плавний перехід: приховуємо старий вміст, показуємо новий уже після завантаження

@@ -442,7 +442,7 @@ app.post('/api/chats/start', authMiddleware, (req, res) => {
 
 // ---------- Групові чати ----------
 
-function serializeGroup(chatId) {
+function serializeGroup(chatId, viewerId) {
   const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
   const members = db.prepare(`
     SELECT u.id, u.username, u.avatar_url as avatarUrl, cm.role
@@ -450,6 +450,12 @@ function serializeGroup(chatId) {
     WHERE cm.chat_id = ?
     ORDER BY cm.joined_at ASC
   `).all(chatId);
+  members.forEach((m) => {
+    // Активність — та сама механіка присутності, що й для особистих чатів
+    // ("у мережі" завжди, якщо учасник саме зараз дивиться цю групу, попри приватність)
+    m.presence = getPresenceForViewer(m.id, chatId, viewerId);
+    m.isOwner = m.id === chat.creator_id;
+  });
   return {
     id: chat.id,
     isGroup: true,
@@ -1083,6 +1089,54 @@ io.on('connection', (socket) => {
       io.to(`user:${socket.user.id}`).emit('chat:deleted', { chatId, scope: 'me' });
       remaining.forEach((m) => {
         io.to(`user:${m.user_id}`).emit('group:updated', serializeGroup(chatId));
+      });
+
+      if (ack) ack({ ok: true });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('group:kick', (payload, ack) => {
+    try {
+      const { chatId, userId } = payload || {};
+      if (!chatId || !userId) {
+        if (ack) ack({ error: 'Не вказано групу або учасника' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ? AND is_group = 1').get(chatId);
+      if (!chat) {
+        if (ack) ack({ error: 'Групу не знайдено' });
+        return;
+      }
+      if (!isGroupAdmin(chatId, socket.user.id)) {
+        if (ack) ack({ error: 'Лише адміністратор може видаляти учасників' });
+        return;
+      }
+      if (userId === chat.creator_id) {
+        if (ack) ack({ error: 'Не можна видалити власника групи' });
+        return;
+      }
+      if (userId === socket.user.id) {
+        if (ack) ack({ error: 'Щоб покинути групу, скористайтесь "Покинути групу"' });
+        return;
+      }
+      const target = db.prepare('SELECT * FROM chat_members WHERE chat_id = ? AND user_id = ?').get(chatId, userId);
+      if (!target) {
+        if (ack) ack({ error: 'Цього учасника вже немає в групі' });
+        return;
+      }
+
+      db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chatId, userId);
+
+      // Видаленого повідомляємо окремо — для нього це виглядає як "чат видалено зі списку"
+      io.to(`user:${userId}`).emit('chat:deleted', { chatId, scope: 'kicked' });
+
+      const group = serializeGroup(chatId);
+      getParticipantIds(chat, null).forEach((uid) => {
+        if (uid === userId) return; // його вже видалено з учасників
+        io.to(`user:${uid}`).emit('group:updated', group);
       });
 
       if (ack) ack({ ok: true });

@@ -2469,7 +2469,7 @@
   }
 
   function renderGroupInfoModal(group) {
-    const isAdmin = group.members.some((m) => m.id === state.user.id && m.role === 'admin');
+    const isAdmin = group.members.some((m) => m.id === state.user.id && (m.role === 'admin' || m.isOwner));
     renderAvatarInto(groupInfoAvatar, group.groupName, group.groupAvatarUrl);
     groupInfoNameView.textContent = group.groupName;
     groupInfoMemberCount.textContent = pluralizeMembers(group.memberCount);
@@ -2481,21 +2481,65 @@
     group.members.forEach((m) => {
       const row = document.createElement('div');
       row.className = 'group-member-row';
+
       const avatarSlot = document.createElement('div');
       avatarSlot.className = 'avatar-slot';
       row.appendChild(avatarSlot);
+
+      const textCol = document.createElement('div');
+      textCol.className = 'group-member-row-text';
       const nameSpan = document.createElement('span');
       nameSpan.className = 'group-member-row-name';
       nameSpan.textContent = m.username;
-      row.appendChild(nameSpan);
-      if (m.role === 'admin') {
+      textCol.appendChild(nameSpan);
+
+      const statusSpan = document.createElement('span');
+      statusSpan.className = 'group-member-row-status';
+      const formatted = formatPresence(m.presence);
+      if (formatted) {
+        statusSpan.textContent = formatted.text;
+        statusSpan.classList.toggle('online', formatted.online);
+        textCol.appendChild(statusSpan);
+      }
+      row.appendChild(textCol);
+
+      if (m.isOwner) {
+        const badge = document.createElement('span');
+        badge.className = 'group-member-role-badge owner';
+        badge.textContent = 'власник';
+        row.appendChild(badge);
+      } else if (m.role === 'admin') {
         const badge = document.createElement('span');
         badge.className = 'group-member-role-badge';
         badge.textContent = 'адмін';
         row.appendChild(badge);
       }
+
+      if (isAdmin && !m.isOwner && m.id !== state.user.id) {
+        const kickBtn = document.createElement('button');
+        kickBtn.type = 'button';
+        kickBtn.className = 'group-member-kick-btn';
+        kickBtn.title = `Видалити @${m.username} з групи`;
+        kickBtn.textContent = '✕';
+        kickBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (!confirm(`Видалити @${m.username} з групи?`)) return;
+          kickGroupMember(group.id, m.id);
+        });
+        row.appendChild(kickBtn);
+      }
+
       groupInfoMembersList.appendChild(row);
       renderAvatarInto(avatarSlot, m.username, m.avatarUrl);
+    });
+  }
+
+  function kickGroupMember(chatId, userId) {
+    state.socket.emit('group:kick', { chatId, userId }, (ack) => {
+      if (ack && ack.error) {
+        groupInfoStatus.textContent = ack.error;
+        groupInfoStatus.classList.remove('hidden');
+      }
     });
   }
 

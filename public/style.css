@@ -474,15 +474,30 @@ body {
 }
 .group-member-row:last-child { border-bottom: none; }
 
-.group-member-row-name {
+.group-member-row-text {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.group-member-row-name {
   font-size: 13.5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .group-member-row-name::before { content: "@"; color: var(--text-dim); }
+
+.group-member-row-status {
+  font-size: 11px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.group-member-row-status.online { color: var(--accent); }
 
 .group-member-role-badge {
   font-size: 10.5px;
@@ -492,6 +507,23 @@ body {
   padding: 2px 6px;
   flex-shrink: 0;
 }
+.group-member-role-badge.owner {
+  color: #c9a8ff;
+  border-color: #6a4fa8;
+}
+
+.group-member-kick-btn {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+.group-member-kick-btn:hover { color: var(--danger); background: rgba(229,105,122,0.12); }
 
 .group-avatar-fallback-icon {
   width: 100%;

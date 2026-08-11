@@ -15,6 +15,7 @@
     activeChatWith: null,
     activeChatIsGroup: false,
     editingMessageId: null,
+    typingByChat: new Map(),
     activeGroup: null,
     chats: [],
     socket: null,
@@ -178,6 +179,82 @@
   window.addEventListener('blur', handleVisibilityOrFocusChange);
   window.addEventListener('focus', handleVisibilityOrFocusChange);
 
+  // ---------- "Друкує…" / "надсилає фото…" — ефемерний індикатор, нічого не зберігається ----------
+
+  const TYPING_ACTION_LABELS = {
+    typing: 'друкує',
+    photo: 'надсилає фото',
+    video: 'надсилає відео',
+    audio: 'надсилає аудіофайл',
+    voice: 'записує голосове',
+  };
+
+  let myTypingTimer = null;
+  let amCurrentlyTyping = false;
+
+  function sendTypingSignal(action) {
+    if (!state.activeChatId || !state.socket || !state.socket.connected) return;
+    state.socket.emit('typing:update', { chatId: state.activeChatId, action });
+  }
+
+  function notifyTyping() {
+    if (!amCurrentlyTyping) {
+      amCurrentlyTyping = true;
+      sendTypingSignal('typing');
+    }
+    clearTimeout(myTypingTimer);
+    myTypingTimer = setTimeout(() => {
+      amCurrentlyTyping = false;
+      sendTypingSignal(null);
+    }, 3000);
+  }
+
+  function stopTypingSignal() {
+    clearTimeout(myTypingTimer);
+    if (amCurrentlyTyping) {
+      amCurrentlyTyping = false;
+      sendTypingSignal(null);
+    }
+  }
+
+  function setRemoteTyping(chatId, userId, username, action) {
+    let chatMap = state.typingByChat.get(chatId);
+    if (!chatMap) {
+      chatMap = new Map();
+      state.typingByChat.set(chatId, chatMap);
+    }
+    const existing = chatMap.get(userId);
+    if (existing) clearTimeout(existing.timer);
+
+    if (!action) {
+      chatMap.delete(userId);
+    } else {
+      // Захист від "зависання" індикатора, якщо подія про зупинку загубилась (напр. розрив з'єднання)
+      const timer = setTimeout(() => {
+        chatMap.delete(userId);
+        refreshTypingUI(chatId);
+      }, 6000);
+      chatMap.set(userId, { username, action, timer });
+    }
+    refreshTypingUI(chatId);
+  }
+
+  function getTypingLabelForChat(chatId) {
+    const chatMap = state.typingByChat.get(chatId);
+    if (!chatMap || chatMap.size === 0) return null;
+    const entries = [...chatMap.values()];
+    if (entries.length > 1) return `${entries.length} осіб пишуть…`;
+    const label = TYPING_ACTION_LABELS[entries[0].action] || 'друкує';
+    const chat = state.chats.find((c) => c.chatId === chatId);
+    if (chat && chat.isGroup) return `${entries[0].username} ${label}…`;
+    return `${label}…`;
+  }
+
+  function refreshTypingUI(chatId) {
+    if (chatId === state.activeChatId) updateChatHeaderStatusLine();
+    renderChatList();
+  }
+
   function connectSocket() {
     state.socket = io({ auth: { token: state.token } });
     state.socket.on('connect', () => {
@@ -185,6 +262,10 @@
       sendChatActiveUpdate();
     });
     state.socket.on('message:new', (msg) => {
+      // Підстраховка: щойно прийшло реальне повідомлення — гасимо індикатор "друкує" для цього відправника
+      if (msg.senderId !== state.user.id) {
+        setRemoteTyping(msg.chatId, msg.senderId, msg.senderUsername, null);
+      }
       // Оновлюємо список чатів (щоб з'явився новий/піднявся вгору)
       loadChats();
       // Якщо це відкритий зараз чат — одразу малюємо повідомлення
@@ -276,6 +357,9 @@
         }
       }
     });
+    state.socket.on('typing:update', ({ chatId, userId, username, action }) => {
+      setRemoteTyping(chatId, userId, username, action);
+    });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
       if (state.activeChatId !== chatId) return;
       const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
@@ -314,14 +398,16 @@
         else contentPreview = chat.lastMessage.text;
         previewText = prefix + contentPreview;
       }
-      const preview = previewText;
+      const typingLabel = getTypingLabelForChat(chat.chatId);
+      const preview = typingLabel || previewText;
+      const previewClass = typingLabel ? 'chat-list-preview typing' : 'chat-list-preview';
       const displayName = chat.isGroup ? chat.groupName : chat.withUser.username;
       const usernameClass = chat.isGroup ? 'chat-list-username group' : 'chat-list-username';
       item.innerHTML = `
         <div class="avatar-slot"></div>
         <div class="chat-list-text">
           <span class="${usernameClass}">${escapeHtml(displayName)}</span>
-          <span class="chat-list-preview">${escapeHtml(preview)}</span>
+          <span class="${previewClass}">${escapeHtml(preview)}</span>
         </div>
       `;
       if (chat.isGroup) {
@@ -703,6 +789,7 @@
     recordingTime.textContent = '0:00';
     updateRecordingTime();
     recordingTimerId = setInterval(updateRecordingTime, 500);
+    sendTypingSignal('voice');
 
     messageFormEl.classList.add('hidden');
     recordingBar.classList.remove('hidden');
@@ -710,6 +797,7 @@
 
   function stopRecording(cancel) {
     recordingCancelled = !!cancel;
+    sendTypingSignal(null);
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
@@ -718,11 +806,14 @@
   async function sendVoiceMessage(file) {
     if (!state.activeChatId) return;
     try {
+      sendTypingSignal('voice');
       const uploaded = await uploadFile(file);
       state.socket.emit('message:send', { chatId: state.activeChatId, text: '', audioUrl: uploaded.url }, (ack) => {
         if (ack && ack.error) console.error(ack.error);
       });
+      sendTypingSignal(null);
     } catch (err) {
+      sendTypingSignal(null);
       alert(err.message);
     }
   }
@@ -747,6 +838,7 @@
   async function openChat(entry) {
     pauseAllAudio();
     cancelEditMessage();
+    stopTypingSignal();
     const chatId = entry.chatId;
     state.activeChatId = chatId;
     state.activeChatIsGroup = !!entry.isGroup;
@@ -828,15 +920,28 @@
       el('chatWithUsername').classList.add('group-title');
       el('chatWithUsername').textContent = state.activeGroup.name;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeGroup.name, state.activeGroup.avatarUrl);
-      const statusEl = el('chatHeaderStatus');
-      statusEl.textContent = pluralizeMembers(state.activeGroup.memberCount);
-      statusEl.classList.remove('online');
     } else if (state.activeChatWith) {
       infoEl.classList.add('clickable');
       infoEl.onclick = () => openUserProfileModal(state.activeChatWith.id);
       el('chatWithUsername').classList.remove('group-title');
       el('chatWithUsername').textContent = state.activeChatWith.username;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, state.activeChatWith.avatarUrl);
+    }
+    updateChatHeaderStatusLine();
+  }
+
+  function updateChatHeaderStatusLine() {
+    const statusEl = el('chatHeaderStatus');
+    const typingLabel = state.activeChatId ? getTypingLabelForChat(state.activeChatId) : null;
+    if (typingLabel) {
+      statusEl.textContent = typingLabel;
+      statusEl.classList.add('online');
+      return;
+    }
+    if (state.activeChatIsGroup && state.activeGroup) {
+      statusEl.textContent = pluralizeMembers(state.activeGroup.memberCount);
+      statusEl.classList.remove('online');
+    } else if (state.activeChatWith) {
       renderChatHeaderStatus(state.activeChatWith.presence);
     }
   }
@@ -1436,6 +1541,8 @@
   messageInputEl.addEventListener('input', () => {
     autoResizeMessageInput();
     updateSendButtonMode();
+    if (messageInputEl.value.trim()) notifyTyping();
+    else stopTypingSignal();
   });
 
   messageInputEl.addEventListener('keydown', (e) => {
@@ -2138,6 +2245,7 @@
         return;
       }
       const editId = state.editingMessageId;
+      stopTypingSignal();
       state.socket.emit('message:edit', { messageId: editId, text }, (ack) => {
         if (ack && ack.error) alert(ack.error);
       });
@@ -2154,6 +2262,7 @@
     }
 
     stickerPopover.classList.add('hidden');
+    stopTypingSignal();
 
     const submitBtn = e.target.querySelector('button[type="submit"]');
     submitBtn.disabled = true;
@@ -2162,20 +2271,24 @@
       let audioUrl = null;
       let videoUrl = null;
       if (pendingImageFile) {
+        sendTypingSignal('photo');
         const uploaded = await uploadFile(pendingImageFile);
         imageUrl = uploaded.url;
       }
       if (pendingAudioFile) {
+        sendTypingSignal('audio');
         const uploaded = await uploadFile(pendingAudioFile);
         audioUrl = uploaded.url;
       }
       if (pendingVideoFile) {
+        sendTypingSignal('video');
         const uploaded = await uploadFile(pendingVideoFile);
         videoUrl = uploaded.url;
       }
       state.socket.emit('message:send', { chatId: state.activeChatId, text, imageUrl, audioUrl, videoUrl }, (ack) => {
         if (ack && ack.error) console.error(ack.error);
       });
+      sendTypingSignal(null);
       input.value = '';
       autoResizeMessageInput();
       pendingImageFile = null;
@@ -2191,6 +2304,7 @@
       videoPreview.classList.add('hidden');
       updateSendButtonMode();
     } catch (err) {
+      sendTypingSignal(null);
       alert(err.message);
     } finally {
       submitBtn.disabled = false;

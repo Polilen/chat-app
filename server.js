@@ -736,6 +736,23 @@ io.on('connection', (socket) => {
     }
   });
 
+  socket.on('typing:update', (payload) => {
+    // Ефемерний сигнал "друкує…" / "надсилає фото…" — нічого не зберігаємо в базі,
+    // просто транслюємо іншим учасникам чату наживо
+    try {
+      const { chatId, action } = payload || {};
+      if (!chatId) return;
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (!chat || !isParticipant(chat, socket.user.id)) return;
+      const out = { chatId, userId: socket.user.id, username: socket.user.username, action: action || null };
+      getParticipantIds(chat, socket.user.id).forEach((uid) => {
+        io.to(`user:${uid}`).emit('typing:update', out);
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
     const chatId = payload && payload.chatId ? Number(payload.chatId) : null;

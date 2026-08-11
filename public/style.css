@@ -312,6 +312,10 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.chat-list-preview.typing {
+  color: var(--accent);
+  font-weight: 600;
+}
 
 .chat-panel {
   position: relative;

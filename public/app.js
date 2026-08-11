@@ -144,7 +144,10 @@
   }
 
   function isPageVisible() {
-    return document.visibilityState === 'visible';
+    // document.visibilityState сам по собі не завжди надійно ловить саме згорнутий стан браузера
+    // (залежить від браузера/ОС) — тому додатково перевіряємо фокус вікна, який при згортанні
+    // втрачається гарантовано в будь-якому браузері
+    return document.visibilityState === 'visible' && document.hasFocus();
   }
 
   function markActiveChatReadIfVisible() {
@@ -163,11 +166,17 @@
     state.socket.emit('chat:active', { chatId });
   }
 
-  document.addEventListener('visibilitychange', () => {
+  function handleVisibilityOrFocusChange() {
     if (isPageVisible()) markActiveChatReadIfVisible();
     sendPresenceUpdate();
     sendChatActiveUpdate();
-  });
+  }
+
+  document.addEventListener('visibilitychange', handleVisibilityOrFocusChange);
+  // window.blur/focus — надійніший сигнал саме для згортання вікна браузера,
+  // спрацьовує завжди, навіть якщо visibilitychange з якоїсь причини не викликався
+  window.addEventListener('blur', handleVisibilityOrFocusChange);
+  window.addEventListener('focus', handleVisibilityOrFocusChange);
 
   function connectSocket() {
     state.socket = io({ auth: { token: state.token } });

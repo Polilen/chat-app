@@ -754,9 +754,13 @@
     renderChatList();
 
     // Якщо панель профілю зараз відкрита — оновлюємо її на нового співрозмовника (для груп просто закриваємо)
-    if (appScreen.classList.contains('profile-open')) {
+    if (userProfileModal.classList.contains('active')) {
       if (entry.isGroup) closeUserProfileModal();
       else if (entry.withUser) openUserProfileModal(entry.withUser.id);
+    }
+    // Якщо відкрита карточка групи, а перемкнулись на інший чат — закриваємо її
+    if (groupInfoModal.classList.contains('active') && entry.chatId !== openGroupInfoChatId) {
+      closeGroupInfoModal();
     }
 
     // Плавний перехід: приховуємо старий вміст, показуємо новий уже після завантаження
@@ -1841,8 +1845,8 @@
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
     if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
-    else if (appScreen.classList.contains('profile-open')) closeUserProfileModal();
-    else if (!groupInfoModal.classList.contains('hidden')) closeGroupInfoModal();
+    else if (userProfileModal.classList.contains('active')) closeUserProfileModal();
+    else if (groupInfoModal.classList.contains('active')) closeGroupInfoModal();
     else if (!createGroupModal.classList.contains('hidden')) closeCreateGroupModal();
     else if (!settingsModal.classList.contains('hidden')) closeSettingsModal();
     else if (!forwardModal.classList.contains('hidden')) closeForwardModal();
@@ -1939,12 +1943,13 @@
   let profileUsernameForFallback = '?';
 
   async function openUserProfileModal(userId) {
+    closeGroupInfoModal();
     userProfileStatus.classList.add('hidden');
     userProfileUsername.textContent = '';
     profilePhotos = [];
     profilePhotoIndex = 0;
     renderProfilePhoto();
-    appScreen.classList.add('profile-open');
+    userProfileModal.classList.add('active');
     try {
       const { user } = await api(`/api/users/${userId}`);
       userProfileUsername.textContent = user.username;
@@ -1998,7 +2003,7 @@
   });
 
   function closeUserProfileModal() {
-    appScreen.classList.remove('profile-open');
+    userProfileModal.classList.remove('active');
   }
 
   document.querySelectorAll('[data-close="userProfile"]').forEach((btn) => btn.addEventListener('click', closeUserProfileModal));
@@ -2449,10 +2454,11 @@
   let openGroupInfoData = null;
 
   async function openGroupInfoModal(chatId) {
+    closeUserProfileModal();
     openGroupInfoChatId = chatId;
     groupInfoStatus.classList.add('hidden');
     groupInfoNameEdit.classList.add('hidden');
-    groupInfoModal.classList.remove('hidden');
+    groupInfoModal.classList.add('active');
     await refreshGroupInfoModal();
   }
 
@@ -2544,7 +2550,7 @@
   }
 
   function closeGroupInfoModal() {
-    groupInfoModal.classList.add('hidden');
+    groupInfoModal.classList.remove('active');
     openGroupInfoChatId = null;
     openGroupInfoData = null;
   }

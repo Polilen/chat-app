@@ -1322,7 +1322,7 @@ body {
   .app-screen.chat-open .chat-panel { display: flex; }
   .chat-back-btn { display: inline-flex; align-items: center; justify-content: center; }
 
-  /* Профіль на мобільних — окремий повноекранний екран зі стрілкою "назад", а не панель, що виштовхує чат */
+  /* Профіль/група на мобільних — окремий повноекранний екран зі стрілкою "назад", а не панель, що виштовхує чат */
   .profile-panel {
     position: fixed;
     inset: 0;
@@ -1332,7 +1332,7 @@ body {
     transform: translateX(100%);
     transition: transform 0.22s ease;
   }
-  #appScreen.profile-open .profile-panel {
+  .profile-panel.active {
     transform: translateX(0);
   }
   .profile-panel-content { width: 100% !important; }
@@ -1570,7 +1570,7 @@ body {
   .avatar-history-delete-btn { opacity: 1; }
 }
 
-/* ---------- Панель профілю (на десктопі виштовхує чат, як у Telegram) ---------- */
+/* ---------- Панель профілю/групи (на десктопі виштовхує чат, як у Telegram) ---------- */
 
 .profile-panel {
   width: 0;
@@ -1580,7 +1580,6 @@ body {
   border-left: 1px solid var(--border);
   transition: width 0.22s cubic-bezier(0.2, 0.8, 0.3, 1);
 }
-.profile-panel.hidden { display: block; } /* саме ширина керує видимістю, не display */
 
 .profile-panel-content {
   width: min(380px, 40vw);
@@ -1590,8 +1589,9 @@ body {
   overflow-y: auto;
 }
 
-/* Клас відкриття вішається на #appScreen — так ширина рахується один раз і плавно анімується */
-#appScreen.profile-open .profile-panel {
+/* Клас відкриття вішається на саму панель (не на #appScreen) — тепер профіль і група
+   є незалежними панелями й не заважають одна одній */
+.profile-panel.active {
   width: min(380px, 40vw);
 }
 

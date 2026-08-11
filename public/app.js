@@ -244,7 +244,7 @@
         renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, avatarUrl);
       }
     });
-    state.socket.on('presence:updated', ({ userId, online, lastSeenAt, vague, justNow }) => {
+    state.socket.on('presence:updated', ({ userId, chatId, online, lastSeenAt, vague, justNow }) => {
       const presence = { online, lastSeenAt, vague, justNow };
       let changed = false;
       state.chats.forEach((chat) => {
@@ -257,6 +257,14 @@
       if (state.activeChatWith && state.activeChatWith.id === userId) {
         state.activeChatWith.presence = presence;
         renderChatHeaderStatus(presence);
+      }
+      // Якщо зараз відкрита карточка групи і в ній є цей учасник — оновлюємо його статус наживо
+      if (openGroupInfoData && (!chatId || chatId === openGroupInfoChatId)) {
+        const member = openGroupInfoData.members.find((m) => m.id === userId);
+        if (member) {
+          member.presence = presence;
+          renderGroupInfoModal(openGroupInfoData);
+        }
       }
     });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {

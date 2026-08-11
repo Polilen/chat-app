@@ -222,13 +222,26 @@ function findChatId(userAId, userBId) {
 }
 
 function broadcastPresenceToPartners(userId) {
-  const partners = db.prepare(`
+  // 1:1 чати
+  const directPartners = db.prepare(`
     SELECT id as chatId, CASE WHEN user1_id = ? THEN user2_id ELSE user1_id END as otherId
-    FROM chats WHERE user1_id = ? OR user2_id = ?
+    FROM chats WHERE is_group = 0 AND (user1_id = ? OR user2_id = ?)
   `).all(userId, userId, userId);
-  partners.forEach((p) => {
+  directPartners.forEach((p) => {
     const presence = getPresenceForViewer(userId, p.chatId, p.otherId);
-    io.to(`user:${p.otherId}`).emit('presence:updated', { userId, ...presence });
+    io.to(`user:${p.otherId}`).emit('presence:updated', { userId, chatId: p.chatId, ...presence });
+  });
+
+  // Групові чати — раніше сюди взагалі не заглядали (user1_id/user2_id у групах завжди NULL),
+  // тому статус учасників групи ніколи не оновлювався в реальному часі
+  const groupChats = db.prepare('SELECT chat_id as chatId FROM chat_members WHERE user_id = ?').all(userId);
+  groupChats.forEach((g) => {
+    const presence = getPresenceForViewer(userId, g.chatId, null);
+    const members = db.prepare('SELECT user_id FROM chat_members WHERE chat_id = ? AND user_id != ?').all(g.chatId, userId);
+    const payload = { userId, chatId: g.chatId, ...presence };
+    members.forEach((m) => {
+      io.to(`user:${m.user_id}`).emit('presence:updated', payload);
+    });
   });
 }
 

@@ -1766,6 +1766,33 @@ body {
   border-radius: 0;
 }
 
+.call-video-fullscreen-btn {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 4;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(0,0,0,0.5);
+  color: #fff;
+  font-size: 15px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.call-video-fullscreen-btn:hover { background: rgba(0,0,0,0.7); }
+
+/* У повноекранному режимі область відео сама займає весь екран — прибираємо радіус і фіксовану пропорцію */
+.call-video-area:fullscreen {
+  aspect-ratio: auto;
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+}
+
 
 .call-modal-content .avatar-slot-large {
   animation: call-avatar-pulse 1.8s ease-in-out infinite;

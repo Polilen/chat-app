@@ -198,11 +198,13 @@
       <div id="callVideoArea" class="call-video-area hidden">
         <video id="callRemoteScreen" class="call-video call-video-main hidden" autoplay playsinline></video>
         <video id="callLocalScreen" class="call-video call-video-pip hidden" autoplay playsinline muted></video>
+        <button type="button" id="callFullscreenBtn" class="call-video-fullscreen-btn hidden" title="На весь екран">⛶</button>
       </div>
       <div id="callAvatar" class="avatar-slot avatar-slot-large"></div>
       <div id="callUsername" class="profile-username"></div>
       <div id="callStatusText" class="call-status-text">Виклик…</div>
       <audio id="remoteCallAudio" autoplay></audio>
+      <audio id="remoteScreenAudio" autoplay></audio>
       <div class="call-actions">
         <button type="button" id="callDeclineBtn" class="call-action-btn decline hidden" title="Відхилити">✕</button>
         <button type="button" id="callAcceptBtn" class="call-action-btn accept hidden" title="Прийняти">📞</button>

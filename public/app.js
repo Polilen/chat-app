@@ -2846,6 +2846,8 @@
   const callRemoteScreen = el('callRemoteScreen');
   const callLocalScreen = el('callLocalScreen');
   const callScreenShareBtn = el('callScreenShareBtn');
+  const callFullscreenBtn = el('callFullscreenBtn');
+  const remoteScreenAudio = el('remoteScreenAudio');
 
   let currentCall = null; // { callId, chatId, peerId, peerUsername, peerAvatarUrl, pc, localStream, role, pendingOffer, screenStream, screenSender }
   let callTimerInterval = null;
@@ -2854,10 +2856,26 @@
   function updateVideoAreaLayout() {
     const hasRemote = !callRemoteScreen.classList.contains('hidden');
     const hasLocal = !callLocalScreen.classList.contains('hidden');
-    callVideoArea.classList.toggle('hidden', !hasRemote && !hasLocal);
+    const hasVideo = hasRemote || hasLocal;
+    callVideoArea.classList.toggle('hidden', !hasVideo);
     callVideoArea.classList.toggle('only-local', hasLocal && !hasRemote);
-    callModalContent.classList.toggle('has-video', hasRemote || hasLocal);
+    callModalContent.classList.toggle('has-video', hasVideo);
+    callFullscreenBtn.classList.toggle('hidden', !hasVideo);
+    if (!hasVideo && document.fullscreenElement === callVideoArea) {
+      document.exitFullscreen().catch(() => {});
+    }
   }
+
+  callFullscreenBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      callVideoArea.requestFullscreen().catch(() => {});
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    callFullscreenBtn.textContent = document.fullscreenElement === callVideoArea ? '⤢' : '⛶';
+  });
 
   function setupPeerConnectionHandlers(pc) {
     pc.onicecandidate = (e) => {
@@ -2875,8 +2893,18 @@
           callRemoteScreen.srcObject = null;
           updateVideoAreaLayout();
         };
-      } else {
+        return;
+      }
+      // Аудіо: перший аудіотрек, який приходить під час дзвінка — це голос співрозмовника (мікрофон).
+      // Якщо пізніше приходить ще один аудіотрек з ІНШИМ ID потоку — це системний звук демонстрації екрана,
+      // його виводимо окремо, щоб не заглушити мікрофон
+      const streamId = e.streams[0] ? e.streams[0].id : null;
+      if (!currentCall.remoteMicStreamId || streamId === currentCall.remoteMicStreamId) {
+        if (!currentCall.remoteMicStreamId) currentCall.remoteMicStreamId = streamId;
         remoteCallAudio.srcObject = e.streams[0];
+      } else {
+        remoteScreenAudio.srcObject = e.streams[0];
+        e.track.onended = () => { remoteScreenAudio.srcObject = null; };
       }
     };
     pc.onconnectionstatechange = () => {
@@ -2913,6 +2941,7 @@
     clearInterval(callTimerInterval);
     callTimerInterval = null;
     remoteCallAudio.srcObject = null;
+    remoteScreenAudio.srcObject = null;
     callRemoteScreen.srcObject = null;
     callRemoteScreen.classList.add('hidden');
     callLocalScreen.srcObject = null;
@@ -2956,14 +2985,25 @@
     }
     let screenStream;
     try {
-      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      // audio: true — спроба захопити системний звук трансляції (звук вкладки/системи).
+      // Підтримка залежить від браузера й того, що саме людина обере ділитись (вкладка з Chrome
+      // зазвичай дозволяє, повний екран — залежить від ОС); якщо звук не підхопився, це не помилка —
+      // просто продовжуємо без нього
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
     } catch (err) {
       return; // людина сама скасувала вибір вікна/екрана — нічого страшного
     }
-    const track = screenStream.getVideoTracks()[0];
-    const sender = currentCall.pc.addTrack(track, screenStream);
+    const videoTrack = screenStream.getVideoTracks()[0];
+    const videoSender = currentCall.pc.addTrack(videoTrack, screenStream);
     currentCall.screenStream = screenStream;
-    currentCall.screenSender = sender;
+    currentCall.screenSender = videoSender;
+
+    const audioTrack = screenStream.getAudioTracks()[0];
+    if (audioTrack) {
+      currentCall.screenAudioSender = currentCall.pc.addTrack(audioTrack, screenStream);
+    } else {
+      currentCall.screenAudioSender = null;
+    }
 
     callLocalScreen.srcObject = screenStream;
     callLocalScreen.classList.remove('hidden');
@@ -2971,7 +3011,7 @@
     callScreenShareBtn.classList.add('active');
 
     // Якщо людина натисне вбудовану кнопку браузера "Припинити доступ" — гасимо демонстрацію коректно
-    track.onended = () => stopScreenShare();
+    videoTrack.onended = () => stopScreenShare();
 
     try {
       const offer = await currentCall.pc.createOffer();
@@ -2988,8 +3028,12 @@
     if (currentCall.screenSender && currentCall.pc) {
       try { currentCall.pc.removeTrack(currentCall.screenSender); } catch (e) { /* ignore */ }
     }
+    if (currentCall.screenAudioSender && currentCall.pc) {
+      try { currentCall.pc.removeTrack(currentCall.screenAudioSender); } catch (e) { /* ignore */ }
+    }
     currentCall.screenStream = null;
     currentCall.screenSender = null;
+    currentCall.screenAudioSender = null;
 
     callLocalScreen.srcObject = null;
     callLocalScreen.classList.add('hidden');

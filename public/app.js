@@ -400,6 +400,25 @@
         console.error(err);
       }
     });
+    state.socket.on('call:renegotiate-offer', async ({ callId, offer }) => {
+      if (!currentCall || currentCall.callId !== callId || !currentCall.pc) return;
+      try {
+        await currentCall.pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await currentCall.pc.createAnswer();
+        await currentCall.pc.setLocalDescription(answer);
+        state.socket.emit('call:renegotiate-answer', { callId, answer });
+      } catch (err) {
+        console.error(err);
+      }
+    });
+    state.socket.on('call:renegotiate-answer', async ({ callId, answer }) => {
+      if (!currentCall || currentCall.callId !== callId || !currentCall.pc) return;
+      try {
+        await currentCall.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      } catch (err) {
+        console.error(err);
+      }
+    });
     state.socket.on('call:declined', ({ callId }) => {
       if (!currentCall || currentCall.callId !== callId) return;
       cleanupCallResources();
@@ -2813,7 +2832,7 @@
   ];
 
   const callModal = el('callModal');
-  const callModalContent = callModal.querySelector('.call-modal-content');
+  const callModalContent = el('callModalContent');
   const callAvatar = el('callAvatar');
   const callUsername = el('callUsername');
   const callStatusText = el('callStatusText');
@@ -2823,10 +2842,22 @@
   const callMuteBtn = el('callMuteBtn');
   const callEndBtn = el('callEndBtn');
   const callBtn = el('callBtn');
+  const callVideoArea = el('callVideoArea');
+  const callRemoteScreen = el('callRemoteScreen');
+  const callLocalScreen = el('callLocalScreen');
+  const callScreenShareBtn = el('callScreenShareBtn');
 
-  let currentCall = null; // { callId, chatId, peerId, peerUsername, peerAvatarUrl, pc, localStream, role, pendingOffer }
+  let currentCall = null; // { callId, chatId, peerId, peerUsername, peerAvatarUrl, pc, localStream, role, pendingOffer, screenStream, screenSender }
   let callTimerInterval = null;
   let callRingTimeout = null;
+
+  function updateVideoAreaLayout() {
+    const hasRemote = !callRemoteScreen.classList.contains('hidden');
+    const hasLocal = !callLocalScreen.classList.contains('hidden');
+    callVideoArea.classList.toggle('hidden', !hasRemote && !hasLocal);
+    callVideoArea.classList.toggle('only-local', hasLocal && !hasRemote);
+    callModalContent.classList.toggle('has-video', hasRemote || hasLocal);
+  }
 
   function setupPeerConnectionHandlers(pc) {
     pc.onicecandidate = (e) => {
@@ -2835,7 +2866,18 @@
       }
     };
     pc.ontrack = (e) => {
-      remoteCallAudio.srcObject = e.streams[0];
+      if (e.track.kind === 'video') {
+        callRemoteScreen.srcObject = e.streams[0];
+        callRemoteScreen.classList.remove('hidden');
+        updateVideoAreaLayout();
+        e.track.onended = () => {
+          callRemoteScreen.classList.add('hidden');
+          callRemoteScreen.srcObject = null;
+          updateVideoAreaLayout();
+        };
+      } else {
+        remoteCallAudio.srcObject = e.streams[0];
+      }
     };
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
@@ -2855,6 +2897,8 @@
     callEndBtn.classList.toggle('hidden', mode === 'incoming');
     callMuteBtn.classList.toggle('hidden', mode !== 'active');
     callMuteBtn.classList.remove('active');
+    callScreenShareBtn.classList.toggle('hidden', mode !== 'active');
+    callScreenShareBtn.classList.remove('active');
 
     if (mode === 'outgoing') callStatusText.textContent = 'Дзвонимо…';
     else if (mode === 'incoming') callStatusText.textContent = 'Вхідний дзвінок…';
@@ -2869,6 +2913,11 @@
     clearInterval(callTimerInterval);
     callTimerInterval = null;
     remoteCallAudio.srcObject = null;
+    callRemoteScreen.srcObject = null;
+    callRemoteScreen.classList.add('hidden');
+    callLocalScreen.srcObject = null;
+    callLocalScreen.classList.add('hidden');
+    updateVideoAreaLayout();
   }
 
   function startCallTimer() {
@@ -2890,10 +2939,72 @@
       if (currentCall.localStream) {
         currentCall.localStream.getTracks().forEach((t) => t.stop());
       }
+      if (currentCall.screenStream) {
+        currentCall.screenStream.getTracks().forEach((t) => t.stop());
+      }
     }
     clearTimeout(callRingTimeout);
     callRingTimeout = null;
     currentCall = null;
+  }
+
+  async function startScreenShare() {
+    if (!currentCall || !currentCall.pc || currentCall.screenStream) return;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+      alert('Цей браузер не підтримує демонстрацію екрана');
+      return;
+    }
+    let screenStream;
+    try {
+      screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+    } catch (err) {
+      return; // людина сама скасувала вибір вікна/екрана — нічого страшного
+    }
+    const track = screenStream.getVideoTracks()[0];
+    const sender = currentCall.pc.addTrack(track, screenStream);
+    currentCall.screenStream = screenStream;
+    currentCall.screenSender = sender;
+
+    callLocalScreen.srcObject = screenStream;
+    callLocalScreen.classList.remove('hidden');
+    updateVideoAreaLayout();
+    callScreenShareBtn.classList.add('active');
+
+    // Якщо людина натисне вбудовану кнопку браузера "Припинити доступ" — гасимо демонстрацію коректно
+    track.onended = () => stopScreenShare();
+
+    try {
+      const offer = await currentCall.pc.createOffer();
+      await currentCall.pc.setLocalDescription(offer);
+      state.socket.emit('call:renegotiate-offer', { callId: currentCall.callId, offer });
+    } catch (err) {
+      console.error(err);
+    }
+  }
+
+  async function stopScreenShare() {
+    if (!currentCall || !currentCall.screenStream) return;
+    currentCall.screenStream.getTracks().forEach((t) => t.stop());
+    if (currentCall.screenSender && currentCall.pc) {
+      try { currentCall.pc.removeTrack(currentCall.screenSender); } catch (e) { /* ignore */ }
+    }
+    currentCall.screenStream = null;
+    currentCall.screenSender = null;
+
+    callLocalScreen.srcObject = null;
+    callLocalScreen.classList.add('hidden');
+    updateVideoAreaLayout();
+    callScreenShareBtn.classList.remove('active');
+
+    if (currentCall.pc) {
+      try {
+        const offer = await currentCall.pc.createOffer();
+        await currentCall.pc.setLocalDescription(offer);
+        state.socket.emit('call:renegotiate-offer', { callId: currentCall.callId, offer });
+      } catch (err) {
+        console.error(err);
+      }
+    }
   }
 
   async function startCall(peer) {
@@ -3012,6 +3123,10 @@
   callAcceptBtn.addEventListener('click', acceptCall);
   callEndBtn.addEventListener('click', endCall);
   callMuteBtn.addEventListener('click', toggleCallMute);
+  callScreenShareBtn.addEventListener('click', () => {
+    if (currentCall && currentCall.screenStream) stopScreenShare();
+    else startScreenShare();
+  });
 
   // ---------- Init ----------
 

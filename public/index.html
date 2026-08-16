@@ -194,7 +194,11 @@
 
   <!-- Дзвінок (вхідний/вихідний/активний) -->
   <div id="callModal" class="call-modal hidden">
-    <div class="call-modal-content">
+    <div id="callModalContent" class="call-modal-content">
+      <div id="callVideoArea" class="call-video-area hidden">
+        <video id="callRemoteScreen" class="call-video call-video-main hidden" autoplay playsinline></video>
+        <video id="callLocalScreen" class="call-video call-video-pip hidden" autoplay playsinline muted></video>
+      </div>
       <div id="callAvatar" class="avatar-slot avatar-slot-large"></div>
       <div id="callUsername" class="profile-username"></div>
       <div id="callStatusText" class="call-status-text">Виклик…</div>
@@ -203,6 +207,7 @@
         <button type="button" id="callDeclineBtn" class="call-action-btn decline hidden" title="Відхилити">✕</button>
         <button type="button" id="callAcceptBtn" class="call-action-btn accept hidden" title="Прийняти">📞</button>
         <button type="button" id="callMuteBtn" class="call-action-btn mute hidden" title="Вимкнути мікрофон">🎤</button>
+        <button type="button" id="callScreenShareBtn" class="call-action-btn screen hidden" title="Демонстрація екрана">🖥️</button>
         <button type="button" id="callEndBtn" class="call-action-btn end hidden" title="Завершити">📞</button>
       </div>
     </div>

@@ -1720,7 +1720,52 @@ body {
   align-items: center;
   gap: 10px;
   box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+  transition: width 0.2s ease;
 }
+.call-modal-content.has-video {
+  width: min(640px, 92vw);
+  padding-top: 20px;
+}
+
+.call-video-area {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  background: #000;
+  border-radius: 14px;
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.call-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #000;
+  display: block;
+}
+
+.call-video-pip {
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  width: 30%;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  border-radius: 8px;
+  border: 2px solid var(--bg-panel);
+  object-fit: cover;
+}
+/* Якщо демонструє лише локальний екран (без вхідного) — займає всю область */
+.call-video-area.only-local .call-video-pip {
+  position: static;
+  width: 100%;
+  height: 100%;
+  aspect-ratio: auto;
+  border: none;
+  border-radius: 0;
+}
+
 
 .call-modal-content .avatar-slot-large {
   animation: call-avatar-pulse 1.8s ease-in-out infinite;
@@ -1763,6 +1808,8 @@ body {
 .call-action-btn.end { background: var(--danger); }
 .call-action-btn.mute { background: var(--bg-elevated); color: var(--text); font-size: 19px; }
 .call-action-btn.mute.active { background: var(--danger); color: #fff; }
+.call-action-btn.screen { background: var(--bg-elevated); color: var(--text); font-size: 19px; }
+.call-action-btn.screen.active { background: var(--accent); color: #fff; }
 
 .delete-choice-content { width: min(300px, 92vw); }
 

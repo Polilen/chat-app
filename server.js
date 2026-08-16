@@ -864,6 +864,36 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Пересогласування (renegotiation) поверх уже встановленого дзвінка — потрібне,
+  // коли додається/забирається трек демонстрації екрана посеред розмови. На відміну
+  // від call:offer, тут НЕ створюється новий callId і немає перевірки "зайнято" —
+  // це просто relay для вже існуючого дзвінка.
+  socket.on('call:renegotiate-offer', (payload) => {
+    try {
+      const { callId, offer } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call || !offer) return;
+      if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
+      const targetId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
+      io.to(`user:${targetId}`).emit('call:renegotiate-offer', { callId, offer, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('call:renegotiate-answer', (payload) => {
+    try {
+      const { callId, answer } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call || !answer) return;
+      if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
+      const targetId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
+      io.to(`user:${targetId}`).emit('call:renegotiate-answer', { callId, answer, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
     const chatId = payload && payload.chatId ? Number(payload.chatId) : null;

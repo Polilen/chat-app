@@ -360,6 +360,56 @@
     state.socket.on('typing:update', ({ chatId, userId, username, action }) => {
       setRemoteTyping(chatId, userId, username, action);
     });
+    state.socket.on('call:incoming', ({ callId, chatId, offer, fromUserId, fromUsername }) => {
+      if (currentCall) {
+        // Вже є активний дзвінок — автоматично відхиляємо новий, як "зайнято"
+        state.socket.emit('call:decline', { callId });
+        return;
+      }
+      const chatEntry = state.chats.find((c) => c.chatId === chatId);
+      const avatarUrl = chatEntry && !chatEntry.isGroup ? chatEntry.withUser.avatarUrl : null;
+      currentCall = {
+        callId,
+        chatId,
+        peerId: fromUserId,
+        peerUsername: fromUsername,
+        peerAvatarUrl: avatarUrl,
+        pc: null,
+        localStream: null,
+        role: 'callee',
+        pendingOffer: offer,
+      };
+      showCallUI('incoming', { username: fromUsername, avatarUrl });
+    });
+    state.socket.on('call:answer', async ({ callId, answer }) => {
+      if (!currentCall || currentCall.callId !== callId || !currentCall.pc) return;
+      clearTimeout(callRingTimeout);
+      try {
+        await currentCall.pc.setRemoteDescription(new RTCSessionDescription(answer));
+        showCallUI('active');
+        startCallTimer();
+      } catch (err) {
+        console.error(err);
+      }
+    });
+    state.socket.on('call:ice-candidate', async ({ callId, candidate }) => {
+      if (!currentCall || currentCall.callId !== callId || !currentCall.pc) return;
+      try {
+        await currentCall.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error(err);
+      }
+    });
+    state.socket.on('call:declined', ({ callId }) => {
+      if (!currentCall || currentCall.callId !== callId) return;
+      cleanupCallResources();
+      hideCallUI();
+    });
+    state.socket.on('call:ended', ({ callId }) => {
+      if (!currentCall || currentCall.callId !== callId) return;
+      cleanupCallResources();
+      hideCallUI();
+    });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
       if (state.activeChatId !== chatId) return;
       const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
@@ -920,12 +970,14 @@
       el('chatWithUsername').classList.add('group-title');
       el('chatWithUsername').textContent = state.activeGroup.name;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeGroup.name, state.activeGroup.avatarUrl);
+      el('callBtn').classList.add('hidden');
     } else if (state.activeChatWith) {
       infoEl.classList.add('clickable');
       infoEl.onclick = () => openUserProfileModal(state.activeChatWith.id);
       el('chatWithUsername').classList.remove('group-title');
       el('chatWithUsername').textContent = state.activeChatWith.username;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, state.activeChatWith.avatarUrl);
+      el('callBtn').classList.remove('hidden');
     }
     updateChatHeaderStatusLine();
   }
@@ -2752,6 +2804,214 @@
 
   document.querySelectorAll('[data-close="createGroup"]').forEach((btn) => btn.addEventListener('click', closeCreateGroupModal));
   document.querySelectorAll('[data-close="groupInfo"]').forEach((btn) => btn.addEventListener('click', closeGroupInfoModal));
+
+  // ---------- Дзвінки (WebRTC, лише в особистих чатах) ----------
+
+  const ICE_SERVERS = [
+    { urls: 'stun:stun.l.google.com:19302' },
+    { urls: 'stun:stun1.l.google.com:19302' },
+  ];
+
+  const callModal = el('callModal');
+  const callModalContent = callModal.querySelector('.call-modal-content');
+  const callAvatar = el('callAvatar');
+  const callUsername = el('callUsername');
+  const callStatusText = el('callStatusText');
+  const remoteCallAudio = el('remoteCallAudio');
+  const callDeclineBtn = el('callDeclineBtn');
+  const callAcceptBtn = el('callAcceptBtn');
+  const callMuteBtn = el('callMuteBtn');
+  const callEndBtn = el('callEndBtn');
+  const callBtn = el('callBtn');
+
+  let currentCall = null; // { callId, chatId, peerId, peerUsername, peerAvatarUrl, pc, localStream, role, pendingOffer }
+  let callTimerInterval = null;
+  let callRingTimeout = null;
+
+  function setupPeerConnectionHandlers(pc) {
+    pc.onicecandidate = (e) => {
+      if (e.candidate && currentCall && currentCall.callId) {
+        state.socket.emit('call:ice-candidate', { callId: currentCall.callId, candidate: e.candidate });
+      }
+    };
+    pc.ontrack = (e) => {
+      remoteCallAudio.srcObject = e.streams[0];
+    };
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        endCall();
+      }
+    };
+  }
+
+  function showCallUI(mode, peer) {
+    if (peer) {
+      renderAvatarInto(callAvatar, peer.username, peer.avatarUrl);
+      callUsername.textContent = peer.username;
+    }
+    callModalContent.classList.toggle('active', mode === 'active');
+    callDeclineBtn.classList.toggle('hidden', mode !== 'incoming');
+    callAcceptBtn.classList.toggle('hidden', mode !== 'incoming');
+    callEndBtn.classList.toggle('hidden', mode === 'incoming');
+    callMuteBtn.classList.toggle('hidden', mode !== 'active');
+    callMuteBtn.classList.remove('active');
+
+    if (mode === 'outgoing') callStatusText.textContent = 'Дзвонимо…';
+    else if (mode === 'incoming') callStatusText.textContent = 'Вхідний дзвінок…';
+    else if (mode === 'active') callStatusText.textContent = '00:00';
+    callStatusText.classList.toggle('timer', mode === 'active');
+
+    callModal.classList.remove('hidden');
+  }
+
+  function hideCallUI() {
+    callModal.classList.add('hidden');
+    clearInterval(callTimerInterval);
+    callTimerInterval = null;
+    remoteCallAudio.srcObject = null;
+  }
+
+  function startCallTimer() {
+    const startedAt = Date.now();
+    clearInterval(callTimerInterval);
+    callTimerInterval = setInterval(() => {
+      const secs = Math.floor((Date.now() - startedAt) / 1000);
+      const mm = String(Math.floor(secs / 60)).padStart(2, '0');
+      const ss = String(secs % 60).padStart(2, '0');
+      callStatusText.textContent = `${mm}:${ss}`;
+    }, 1000);
+  }
+
+  function cleanupCallResources() {
+    if (currentCall) {
+      if (currentCall.pc) {
+        try { currentCall.pc.close(); } catch (e) { /* ignore */ }
+      }
+      if (currentCall.localStream) {
+        currentCall.localStream.getTracks().forEach((t) => t.stop());
+      }
+    }
+    clearTimeout(callRingTimeout);
+    callRingTimeout = null;
+    currentCall = null;
+  }
+
+  async function startCall(peer) {
+    if (currentCall) {
+      alert('У вас вже є активний дзвінок');
+      return;
+    }
+    if (!navigator.mediaDevices || !window.RTCPeerConnection) {
+      alert('Цей браузер не підтримує дзвінки');
+      return;
+    }
+    let localStream;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert('Не вдалося отримати доступ до мікрофона');
+      return;
+    }
+
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+
+    currentCall = {
+      callId: null,
+      chatId: state.activeChatId,
+      peerId: peer.id,
+      peerUsername: peer.username,
+      peerAvatarUrl: peer.avatarUrl,
+      pc,
+      localStream,
+      role: 'caller',
+    };
+    setupPeerConnectionHandlers(pc);
+    showCallUI('outgoing', peer);
+
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      state.socket.emit('call:offer', { chatId: state.activeChatId, offer }, (ack) => {
+        if (!currentCall) return; // могли вже скасувати
+        if (ack && ack.error) {
+          alert(ack.error);
+          cleanupCallResources();
+          hideCallUI();
+          return;
+        }
+        currentCall.callId = ack.callId;
+        // Якщо за 40 секунд ніхто не відповів — самі завершуємо
+        callRingTimeout = setTimeout(() => {
+          if (currentCall && currentCall.callId === ack.callId) endCall();
+        }, 40000);
+      });
+    } catch (err) {
+      cleanupCallResources();
+      hideCallUI();
+      alert('Не вдалося ініціювати дзвінок');
+    }
+  }
+
+  async function acceptCall() {
+    if (!currentCall || currentCall.role !== 'callee') return;
+    let localStream;
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch (err) {
+      alert('Не вдалося отримати доступ до мікрофона');
+      declineCall();
+      return;
+    }
+    const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
+    localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+    currentCall.pc = pc;
+    currentCall.localStream = localStream;
+    setupPeerConnectionHandlers(pc);
+
+    try {
+      await pc.setRemoteDescription(new RTCSessionDescription(currentCall.pendingOffer));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      state.socket.emit('call:answer', { callId: currentCall.callId, answer });
+      showCallUI('active');
+      startCallTimer();
+    } catch (err) {
+      console.error(err);
+      declineCall();
+    }
+  }
+
+  function declineCall() {
+    if (!currentCall) return;
+    if (currentCall.callId) state.socket.emit('call:decline', { callId: currentCall.callId });
+    cleanupCallResources();
+    hideCallUI();
+  }
+
+  function endCall() {
+    if (!currentCall) return;
+    if (currentCall.callId) state.socket.emit('call:end', { callId: currentCall.callId });
+    cleanupCallResources();
+    hideCallUI();
+  }
+
+  function toggleCallMute() {
+    if (!currentCall || !currentCall.localStream) return;
+    const track = currentCall.localStream.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    callMuteBtn.classList.toggle('active', !track.enabled);
+  }
+
+  callBtn.addEventListener('click', () => {
+    if (state.activeChatIsGroup || !state.activeChatWith) return;
+    startCall(state.activeChatWith);
+  });
+  callDeclineBtn.addEventListener('click', declineCall);
+  callAcceptBtn.addEventListener('click', acceptCall);
+  callEndBtn.addEventListener('click', endCall);
+  callMuteBtn.addEventListener('click', toggleCallMute);
 
   // ---------- Init ----------
 

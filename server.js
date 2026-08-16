@@ -154,6 +154,19 @@ function groupReactions(rows) {
   }));
 }
 
+// ---------- Дзвінки (WebRTC-сигналінг, лише relay — медіа йде напряму між браузерами) ----------
+
+const activeCalls = new Map(); // callId -> { chatId, callerId, calleeId, status }
+const userActiveCallId = new Map(); // userId -> callId
+
+function cleanupCall(callId) {
+  const call = activeCalls.get(callId);
+  if (!call) return;
+  userActiveCallId.delete(call.callerId);
+  userActiveCallId.delete(call.calleeId);
+  activeCalls.delete(callId);
+}
+
 // ---------- Присутність (онлайн / був(ла) нещодавно) ----------
 
 // userId -> Set(socketId) — сокети із реально видимою (не згорнутою/фоновою) вкладкою будь-де на сайті
@@ -753,6 +766,104 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ---------- Дзвінки (голосові, лише в особистих чатах) ----------
+
+  socket.on('call:offer', (payload, ack) => {
+    try {
+      const { chatId, offer } = payload || {};
+      if (!chatId || !offer) {
+        if (ack) ack({ error: 'Некоректні дані дзвінка' });
+        return;
+      }
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (!chat || chat.is_group || !isParticipant(chat, socket.user.id)) {
+        if (ack) ack({ error: 'Дзвінки доступні лише в особистих чатах' });
+        return;
+      }
+      const calleeId = otherUserId(chat, socket.user.id);
+
+      if (userActiveCallId.has(socket.user.id)) {
+        if (ack) ack({ error: 'У вас уже є активний дзвінок' });
+        return;
+      }
+      if (userActiveCallId.has(calleeId)) {
+        if (ack) ack({ error: 'Співрозмовник зараз на іншому дзвінку' });
+        return;
+      }
+
+      const callId = `${chatId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      activeCalls.set(callId, { chatId, callerId: socket.user.id, calleeId, status: 'ringing' });
+      userActiveCallId.set(socket.user.id, callId);
+      userActiveCallId.set(calleeId, callId);
+
+      io.to(`user:${calleeId}`).emit('call:incoming', {
+        callId,
+        chatId,
+        offer,
+        fromUserId: socket.user.id,
+        fromUsername: socket.user.username,
+      });
+
+      if (ack) ack({ ok: true, callId });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('call:answer', (payload) => {
+    try {
+      const { callId, answer } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call || call.calleeId !== socket.user.id) return;
+      call.status = 'active';
+      io.to(`user:${call.callerId}`).emit('call:answer', { callId, answer, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('call:ice-candidate', (payload) => {
+    try {
+      const { callId, candidate } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call) return;
+      if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
+      const targetId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
+      io.to(`user:${targetId}`).emit('call:ice-candidate', { callId, candidate, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('call:decline', (payload) => {
+    try {
+      const { callId } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call) return;
+      if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
+      const otherId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
+      io.to(`user:${otherId}`).emit('call:declined', { callId, fromUserId: socket.user.id });
+      cleanupCall(callId);
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('call:end', (payload) => {
+    try {
+      const { callId } = payload || {};
+      const call = activeCalls.get(callId);
+      if (!call) return;
+      if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
+      const otherId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
+      io.to(`user:${otherId}`).emit('call:ended', { callId, fromUserId: socket.user.id });
+      cleanupCall(callId);
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
     const chatId = payload && payload.chatId ? Number(payload.chatId) : null;
@@ -776,6 +887,17 @@ io.on('connection', (socket) => {
 
   socket.on('disconnect', () => {
     const uid = socket.user.id;
+
+    // Якщо був активний дзвінок — повідомляємо іншу сторону, що зв'язок обірвався
+    const callId = userActiveCallId.get(uid);
+    if (callId) {
+      const call = activeCalls.get(callId);
+      if (call) {
+        const otherId = call.callerId === uid ? call.calleeId : call.callerId;
+        io.to(`user:${otherId}`).emit('call:ended', { callId, fromUserId: uid });
+        cleanupCall(callId);
+      }
+    }
 
     if (socket.data.activeChatId) {
       removeChatViewer(socket.data.activeChatId, uid, socket.id);

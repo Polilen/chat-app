@@ -72,6 +72,7 @@
             </div>
           </div>
           <div class="chat-header-actions">
+            <button id="callBtn" class="icon-btn hidden" title="Подзвонити">📞</button>
             <div class="volume-control">
               <button id="volumeBtn" class="icon-btn" title="Гучність голосових повідомлень">🔊</button>
               <div id="volumePopover" class="volume-popover hidden">
@@ -187,6 +188,22 @@
           <p id="groupInfoStatus" class="forward-status hidden" style="border:none"></p>
           <button type="button" id="groupLeaveBtn" class="modal-action-btn danger" style="width:100%;justify-content:center;margin-top:6px;">Покинути групу</button>
         </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Дзвінок (вхідний/вихідний/активний) -->
+  <div id="callModal" class="call-modal hidden">
+    <div class="call-modal-content">
+      <div id="callAvatar" class="avatar-slot avatar-slot-large"></div>
+      <div id="callUsername" class="profile-username"></div>
+      <div id="callStatusText" class="call-status-text">Виклик…</div>
+      <audio id="remoteCallAudio" autoplay></audio>
+      <div class="call-actions">
+        <button type="button" id="callDeclineBtn" class="call-action-btn decline hidden" title="Відхилити">✕</button>
+        <button type="button" id="callAcceptBtn" class="call-action-btn accept hidden" title="Прийняти">📞</button>
+        <button type="button" id="callMuteBtn" class="call-action-btn mute hidden" title="Вимкнути мікрофон">🎤</button>
+        <button type="button" id="callEndBtn" class="call-action-btn end hidden" title="Завершити">📞</button>
       </div>
     </div>
   </div>

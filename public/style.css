@@ -1697,6 +1697,73 @@ body {
 }
 .profile-username::before { content: "@"; color: var(--text-dim); }
 
+/* ---------- Дзвінок ---------- */
+
+.call-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10,10,14,0.72);
+  backdrop-filter: blur(4px);
+}
+
+.call-modal-content {
+  width: min(320px, 88vw);
+  background: var(--bg-panel);
+  border-radius: 20px;
+  padding: 36px 24px 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+}
+
+.call-modal-content .avatar-slot-large {
+  animation: call-avatar-pulse 1.8s ease-in-out infinite;
+}
+@keyframes call-avatar-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 var(--accent-dim); }
+  50% { box-shadow: 0 0 0 14px transparent; }
+}
+.call-modal-content.active .avatar-slot-large { animation: none; }
+
+.call-status-text {
+  font-size: 13.5px;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+.call-status-text.timer { color: var(--accent); font-variant-numeric: tabular-nums; }
+
+.call-actions {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+
+.call-action-btn {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: none;
+  font-size: 22px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: transform 0.12s, background 0.12s;
+}
+.call-action-btn:hover { transform: scale(1.06); }
+.call-action-btn.accept { background: #2fb56a; }
+.call-action-btn.decline,
+.call-action-btn.end { background: var(--danger); }
+.call-action-btn.mute { background: var(--bg-elevated); color: var(--text); font-size: 19px; }
+.call-action-btn.mute.active { background: var(--danger); color: #fff; }
+
 .delete-choice-content { width: min(300px, 92vw); }
 
 .delete-choice-body {

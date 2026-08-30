@@ -61,6 +61,7 @@ db.exec(`
     video_url TEXT,
     read_at TEXT,
     edited_at TEXT,
+    event_type TEXT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY(chat_id) REFERENCES chats(id),
     FOREIGN KEY(sender_id) REFERENCES users(id)
@@ -148,6 +149,9 @@ if (!messageColumns.includes('read_at')) {
 }
 if (!messageColumns.includes('edited_at')) {
   db.exec('ALTER TABLE messages ADD COLUMN edited_at TEXT');
+}
+if (!messageColumns.includes('event_type')) {
+  db.exec('ALTER TABLE messages ADD COLUMN event_type TEXT');
 }
 
 // Міграція для баз, створених до появи аватарок

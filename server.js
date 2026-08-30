@@ -167,6 +167,41 @@ function cleanupCall(callId) {
   activeCalls.delete(callId);
 }
 
+// chatId -> { startedAt } — активні сеанси спільного перегляду (лише після прийняття запрошення)
+const activeWatchSessions = new Map();
+
+function formatDurationText(ms) {
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const mins = Math.floor(totalSeconds / 60);
+  const secs = totalSeconds % 60;
+  if (mins > 0) return `${mins} хв ${secs} с`;
+  return `${secs} с`;
+}
+
+// Системні повідомлення в чат про дзвінки/спільний перегляд — sender_id є формальністю
+// (для NOT NULL-обмеження), клієнт рендерить їх окремо від звичайних бульбашок за event_type
+function insertSystemMessage(chatId, senderId, text, eventType) {
+  try {
+    const info = db.prepare(
+      'INSERT INTO messages (chat_id, sender_id, text, event_type) VALUES (?, ?, ?, ?)'
+    ).run(chatId, senderId, text, eventType);
+    const message = db.prepare(`
+      SELECT m.id, m.chat_id as chatId, m.sender_id as senderId, u.username as senderUsername,
+             u.avatar_url as senderAvatarUrl, m.text, m.event_type as eventType, m.created_at as createdAt
+      FROM messages m JOIN users u ON u.id = m.sender_id
+      WHERE m.id = ?
+    `).get(info.lastInsertRowid);
+    const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+    if (chat) {
+      getParticipantIds(chat, null).forEach((uid) => {
+        io.to(`user:${uid}`).emit('message:new', { ...message, isGroup: false });
+      });
+    }
+  } catch (err) {
+    console.error('insertSystemMessage error:', err);
+  }
+}
+
 // ---------- Присутність (онлайн / був(ла) нещодавно) ----------
 
 // userId -> Set(socketId) — сокети із реально видимою (не згорнутою/фоновою) вкладкою будь-де на сайті
@@ -683,7 +718,7 @@ app.get('/api/chats/:chatId/messages', authMiddleware, (req, res) => {
   const messages = db.prepare(`
     SELECT m.id, m.sender_id as senderId, u.username as senderUsername, u.avatar_url as senderAvatarUrl,
            m.text, m.image_url as imageUrl, m.audio_url as audioUrl,
-           m.video_url as videoUrl, m.read_at as readAt, m.edited_at as editedAt, m.created_at as createdAt
+           m.video_url as videoUrl, m.read_at as readAt, m.edited_at as editedAt, m.event_type as eventType, m.created_at as createdAt
     FROM messages m
     JOIN users u ON u.id = m.sender_id
     WHERE m.chat_id = ?
@@ -817,6 +852,7 @@ io.on('connection', (socket) => {
       const call = activeCalls.get(callId);
       if (!call || call.calleeId !== socket.user.id) return;
       call.status = 'active';
+      call.startedAt = Date.now();
       io.to(`user:${call.callerId}`).emit('call:answer', { callId, answer, fromUserId: socket.user.id });
     } catch (err) {
       console.error(err);
@@ -844,6 +880,7 @@ io.on('connection', (socket) => {
       if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
       const otherId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
       io.to(`user:${otherId}`).emit('call:declined', { callId, fromUserId: socket.user.id });
+      insertSystemMessage(call.chatId, socket.user.id, 'Дзвінок відхилено', 'call_declined');
       cleanupCall(callId);
     } catch (err) {
       console.error(err);
@@ -858,6 +895,11 @@ io.on('connection', (socket) => {
       if (call.callerId !== socket.user.id && call.calleeId !== socket.user.id) return;
       const otherId = call.callerId === socket.user.id ? call.calleeId : call.callerId;
       io.to(`user:${otherId}`).emit('call:ended', { callId, fromUserId: socket.user.id });
+      if (call.status === 'active' && call.startedAt) {
+        insertSystemMessage(call.chatId, socket.user.id, `Дзвінок тривав ${formatDurationText(Date.now() - call.startedAt)}`, 'call_ended');
+      } else {
+        insertSystemMessage(call.chatId, socket.user.id, 'Пропущений дзвінок', 'call_missed');
+      }
       cleanupCall(callId);
     } catch (err) {
       console.error(err);
@@ -926,6 +968,7 @@ io.on('connection', (socket) => {
       if (!chatId) return;
       const otherId = watchDirectPartner(chatId, socket.user.id);
       if (!otherId) return;
+      activeWatchSessions.set(chatId, { startedAt: Date.now() });
       io.to(`user:${otherId}`).emit('watch:accepted', { chatId, fromUserId: socket.user.id });
     } catch (err) {
       console.error(err);
@@ -939,6 +982,12 @@ io.on('connection', (socket) => {
       const otherId = watchDirectPartner(chatId, socket.user.id);
       if (!otherId) return;
       io.to(`user:${otherId}`).emit('watch:declined', { chatId, fromUserId: socket.user.id });
+      insertSystemMessage(
+        chatId,
+        socket.user.id,
+        `${socket.user.username}: запрошення подивитись відео разом відхилено`,
+        'watch_declined'
+      );
     } catch (err) {
       console.error(err);
     }
@@ -964,6 +1013,16 @@ io.on('connection', (socket) => {
       const otherId = watchDirectPartner(chatId, socket.user.id);
       if (!otherId) return;
       io.to(`user:${otherId}`).emit('watch:end', { chatId, fromUserId: socket.user.id });
+      const session = activeWatchSessions.get(chatId);
+      if (session) {
+        insertSystemMessage(
+          chatId,
+          socket.user.id,
+          `Спільний перегляд тривав ${formatDurationText(Date.now() - session.startedAt)}`,
+          'watch_ended'
+        );
+        activeWatchSessions.delete(chatId);
+      }
     } catch (err) {
       console.error(err);
     }
@@ -1000,7 +1059,23 @@ io.on('connection', (socket) => {
       if (call) {
         const otherId = call.callerId === uid ? call.calleeId : call.callerId;
         io.to(`user:${otherId}`).emit('call:ended', { callId, fromUserId: uid });
+        if (call.status === 'active' && call.startedAt) {
+          insertSystemMessage(call.chatId, uid, `Дзвінок тривав ${formatDurationText(Date.now() - call.startedAt)}`, 'call_ended');
+        } else {
+          insertSystemMessage(call.chatId, uid, 'Пропущений дзвінок', 'call_missed');
+        }
         cleanupCall(callId);
+      }
+    }
+
+    // Якщо тривав спільний перегляд — так само фіксуємо його тривалість і повідомляємо іншу сторону
+    for (const [chatId, session] of activeWatchSessions.entries()) {
+      const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+      if (chat && isParticipant(chat, uid)) {
+        const otherWatchId = otherUserId(chat, uid);
+        io.to(`user:${otherWatchId}`).emit('watch:end', { chatId, fromUserId: uid });
+        insertSystemMessage(chatId, uid, `Спільний перегляд тривав ${formatDurationText(Date.now() - session.startedAt)}`, 'watch_ended');
+        activeWatchSessions.delete(chatId);
       }
     }
 
@@ -1041,7 +1116,7 @@ io.on('connection', (socket) => {
         'INSERT INTO messages (chat_id, sender_id, text, image_url, audio_url, video_url) VALUES (?, ?, ?, ?, ?, ?)'
       ).run(chatId, socket.user.id, cleanText, cleanImageUrl, cleanAudioUrl, cleanVideoUrl);
       const message = db.prepare(
-        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, edited_at as editedAt, created_at as createdAt FROM messages WHERE id = ?'
+        'SELECT id, chat_id as chatId, sender_id as senderId, text, image_url as imageUrl, audio_url as audioUrl, video_url as videoUrl, read_at as readAt, edited_at as editedAt, event_type as eventType, created_at as createdAt FROM messages WHERE id = ?'
       ).get(info.lastInsertRowid);
 
       const senderRow = db.prepare('SELECT id, username, avatar_url as avatarUrl FROM users WHERE id = ?').get(socket.user.id);

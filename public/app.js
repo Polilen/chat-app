@@ -999,6 +999,7 @@
         videoUrl: m.videoUrl,
         readAt: m.readAt,
         editedAt: m.editedAt,
+        eventType: m.eventType,
         reactions: m.reactions,
         createdAt: m.createdAt,
       }));
@@ -1082,6 +1083,17 @@
 
   function appendMessage(msg) {
     if (msg.chatId !== state.activeChatId) return;
+
+    const eventType = msg.eventType || msg.event_type;
+    if (eventType) {
+      const sysDiv = document.createElement('div');
+      sysDiv.className = 'msg-system';
+      if (msg.id != null) sysDiv.dataset.id = msg.id;
+      sysDiv.textContent = msg.text || '';
+      messagesEl.appendChild(sysDiv);
+      return;
+    }
+
     const mine = msg.senderId === state.user.id || msg.sender_id === state.user.id;
     const messageId = msg.id;
     const div = document.createElement('div');

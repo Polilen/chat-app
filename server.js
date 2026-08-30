@@ -894,6 +894,51 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ---------- Спільний перегляд відео (лише в особистих чатах) ----------
+  // Це чистий relay без збереження стану на сервері — так само, як typing:update.
+
+  function watchDirectPartner(chatId, myId) {
+    const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+    if (!chat || chat.is_group || !isParticipant(chat, myId)) return null;
+    return otherUserId(chat, myId);
+  }
+
+  socket.on('watch:start', (payload) => {
+    try {
+      const { chatId, source } = payload || {};
+      if (!chatId || !source) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:start', { chatId, source, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('watch:state', (payload) => {
+    try {
+      const { chatId, action, time } = payload || {};
+      if (!chatId || !action) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:state', { chatId, action, time, ts: Date.now(), fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('watch:end', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:end', { chatId, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
     const chatId = payload && payload.chatId ? Number(payload.chatId) : null;

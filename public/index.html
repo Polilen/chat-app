@@ -62,6 +62,33 @@
       </div>
 
       <div id="activeChat" class="active-chat hidden">
+        <div id="watchVideoArea" class="watch-video-area hidden">
+          <div class="watch-video-header">
+            <span class="watch-video-title">Дивимось разом</span>
+            <button type="button" id="watchCloseBtn" class="icon-btn" title="Завершити перегляд">✕</button>
+          </div>
+          <div id="watchSourcePicker" class="watch-source-picker">
+            <p class="watch-source-hint">Встав посилання на YouTube або завантаж свій відеофайл — обидва зможуть ставити паузу й перемотувати разом</p>
+            <div class="watch-source-row">
+              <input type="text" id="watchYoutubeInput" placeholder="https://youtube.com/watch?v=…">
+              <button type="button" id="watchYoutubeBtn" class="modal-action-btn">Дивитись</button>
+            </div>
+            <div class="watch-source-divider">або</div>
+            <input type="file" id="watchFileInput" accept="video/*" class="hidden">
+            <button type="button" id="watchFileBtn" class="modal-action-btn">🎬 Завантажити відеофайл</button>
+            <p id="watchSourceStatus" class="forward-status hidden" style="border:none"></p>
+          </div>
+          <div id="watchPlayerWrap" class="watch-player-wrap hidden">
+            <div id="watchYoutubeMount" class="watch-youtube-mount hidden"></div>
+            <video id="watchVideoFile" class="watch-video-file hidden" playsinline></video>
+            <div id="watchYtControls" class="watch-yt-controls hidden">
+              <button type="button" id="watchYtPlayBtn" class="watch-yt-play-btn">▶</button>
+              <input type="range" id="watchYtSeek" min="0" max="100" value="0" step="0.1">
+              <span id="watchYtTime" class="watch-yt-time">0:00 / 0:00</span>
+            </div>
+          </div>
+        </div>
+        <div id="chatContentWrap" class="chat-content-wrap">
         <header class="chat-header">
           <div class="chat-header-info" id="chatHeaderInfo">
             <button id="chatBackBtn" class="icon-btn chat-back-btn" title="Назад до списку чатів">←</button>
@@ -72,6 +99,7 @@
             </div>
           </div>
           <div class="chat-header-actions">
+            <button id="watchTogetherBtn" class="icon-btn hidden" title="Дивитись відео разом">🎬</button>
             <button id="callBtn" class="icon-btn hidden" title="Подзвонити">📞</button>
             <div class="volume-control">
               <button id="volumeBtn" class="icon-btn" title="Гучність голосових повідомлень">🔊</button>
@@ -136,6 +164,7 @@
           </div>
           <button type="submit" id="sendBtn" title="Надіслати">➤</button>
         </form>
+        </div>
       </div>
     </main>
 

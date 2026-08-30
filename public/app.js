@@ -429,6 +429,19 @@
       cleanupCallResources();
       hideCallUI();
     });
+    state.socket.on('watch:start', ({ chatId, source }) => {
+      if (state.activeChatId !== chatId) return;
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, false);
+      else if (source.type === 'file') beginFileSession(source.url, chatId, false);
+    });
+    state.socket.on('watch:state', ({ chatId, action, time, ts }) => {
+      if (!watchSession || watchSession.chatId !== chatId) return;
+      applyRemoteWatchState(action, time, ts);
+    });
+    state.socket.on('watch:end', ({ chatId }) => {
+      if (!watchSession || watchSession.chatId !== chatId) return;
+      closeWatchSession(false);
+    });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
       if (state.activeChatId !== chatId) return;
       const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
@@ -908,6 +921,9 @@
     pauseAllAudio();
     cancelEditMessage();
     stopTypingSignal();
+    if (watchSession && watchSession.chatId !== entry.chatId) {
+      closeWatchSession(true);
+    }
     const chatId = entry.chatId;
     state.activeChatId = chatId;
     state.activeChatIsGroup = !!entry.isGroup;
@@ -990,6 +1006,7 @@
       el('chatWithUsername').textContent = state.activeGroup.name;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeGroup.name, state.activeGroup.avatarUrl);
       el('callBtn').classList.add('hidden');
+      el('watchTogetherBtn').classList.add('hidden');
     } else if (state.activeChatWith) {
       infoEl.classList.add('clickable');
       infoEl.onclick = () => openUserProfileModal(state.activeChatWith.id);
@@ -997,6 +1014,7 @@
       el('chatWithUsername').textContent = state.activeChatWith.username;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeChatWith.username, state.activeChatWith.avatarUrl);
       el('callBtn').classList.remove('hidden');
+      el('watchTogetherBtn').classList.remove('hidden');
     }
     updateChatHeaderStatusLine();
   }
@@ -3171,6 +3189,265 @@
     if (currentCall && currentCall.screenStream) stopScreenShare();
     else startScreenShare();
   });
+
+  // ---------- Спільний перегляд відео (YouTube або власний файл) ----------
+
+  const watchTogetherBtn = el('watchTogetherBtn');
+  const watchVideoArea = el('watchVideoArea');
+  const watchCloseBtn = el('watchCloseBtn');
+  const watchSourcePicker = el('watchSourcePicker');
+  const watchYoutubeInput = el('watchYoutubeInput');
+  const watchYoutubeBtn = el('watchYoutubeBtn');
+  const watchFileInput = el('watchFileInput');
+  const watchFileBtn = el('watchFileBtn');
+  const watchSourceStatus = el('watchSourceStatus');
+  const watchPlayerWrap = el('watchPlayerWrap');
+  const watchYoutubeMount = el('watchYoutubeMount');
+  const watchVideoFile = el('watchVideoFile');
+  const watchYtControls = el('watchYtControls');
+  const watchYtPlayBtn = el('watchYtPlayBtn');
+  const watchYtSeek = el('watchYtSeek');
+  const watchYtTime = el('watchYtTime');
+
+  let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
+  let youtubeApiPromise = null;
+
+  function parseYoutubeVideoId(input) {
+    const trimmed = (input || '').trim();
+    if (!trimmed) return null;
+    if (/^[\w-]{11}$/.test(trimmed)) return trimmed; // вже голий ID
+    try {
+      const url = new URL(trimmed);
+      if (url.hostname.includes('youtu.be')) return url.pathname.slice(1).split('/')[0] || null;
+      if (url.hostname.includes('youtube.com')) {
+        if (url.searchParams.get('v')) return url.searchParams.get('v');
+        const shortsMatch = url.pathname.match(/\/shorts\/([\w-]{11})/);
+        if (shortsMatch) return shortsMatch[1];
+        const embedMatch = url.pathname.match(/\/embed\/([\w-]{11})/);
+        if (embedMatch) return embedMatch[1];
+      }
+    } catch (e) { /* не URL — не підходить */ }
+    return null;
+  }
+
+  function formatDuration(totalSeconds) {
+    const secs = Math.max(0, Math.floor(totalSeconds || 0));
+    const mm = Math.floor(secs / 60);
+    const ss = String(secs % 60).padStart(2, '0');
+    return `${mm}:${ss}`;
+  }
+
+  function loadYoutubeApi() {
+    if (window.YT && window.YT.Player) return Promise.resolve();
+    if (youtubeApiPromise) return youtubeApiPromise;
+    youtubeApiPromise = new Promise((resolve) => {
+      const prevReady = window.onYouTubeIframeAPIReady;
+      window.onYouTubeIframeAPIReady = () => {
+        if (prevReady) prevReady();
+        resolve();
+      };
+      const script = document.createElement('script');
+      script.src = 'https://www.youtube.com/iframe_api';
+      document.head.appendChild(script);
+    });
+    return youtubeApiPromise;
+  }
+
+  function openWatchArea() {
+    if (state.activeChatIsGroup || !state.activeChatId) return;
+    activeChatEl.classList.add('watch-mode');
+    watchVideoArea.classList.remove('hidden');
+  }
+
+  function showSourcePicker() {
+    watchSourcePicker.classList.remove('hidden');
+    watchPlayerWrap.classList.add('hidden');
+    watchSourceStatus.classList.add('hidden');
+  }
+
+  function showPlayer() {
+    watchSourcePicker.classList.add('hidden');
+    watchPlayerWrap.classList.remove('hidden');
+  }
+
+  async function beginYoutubeSession(videoId, chatId, announce) {
+    openWatchArea();
+    showPlayer();
+    watchVideoFile.classList.add('hidden');
+    watchYoutubeMount.classList.remove('hidden');
+    watchYtControls.classList.remove('hidden');
+
+    await loadYoutubeApi();
+
+    watchSession = { chatId, type: 'youtube', ytPlayer: null, applyingRemote: false, pollTimer: null, seekDragging: false };
+
+    watchYoutubeMount.innerHTML = '<div id="watchYoutubeMountInner"></div>';
+    const ytPlayer = new YT.Player('watchYoutubeMountInner', {
+      videoId,
+      playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1 },
+      events: {
+        onReady: () => {
+          watchYtSeek.max = String(ytPlayer.getDuration() || 100);
+        },
+        onStateChange: (e) => {
+          if (!watchSession || watchSession.applyingRemote) return;
+          if (e.data === YT.PlayerState.PLAYING) {
+            emitWatchState('play', ytPlayer.getCurrentTime());
+            watchYtPlayBtn.textContent = '⏸';
+          } else if (e.data === YT.PlayerState.PAUSED) {
+            emitWatchState('pause', ytPlayer.getCurrentTime());
+            watchYtPlayBtn.textContent = '▶';
+          }
+        },
+      },
+    });
+    watchSession.ytPlayer = ytPlayer;
+
+    watchSession.pollTimer = setInterval(() => {
+      if (!watchSession || !watchSession.ytPlayer || watchSession.seekDragging) return;
+      const cur = watchSession.ytPlayer.getCurrentTime() || 0;
+      const dur = watchSession.ytPlayer.getDuration() || 0;
+      if (dur) watchYtSeek.max = String(dur);
+      watchYtSeek.value = String(cur);
+      watchYtTime.textContent = `${formatDuration(cur)} / ${formatDuration(dur)}`;
+    }, 500);
+
+    if (announce) {
+      state.socket.emit('watch:start', { chatId, source: { type: 'youtube', videoId } });
+    }
+  }
+
+  function beginFileSession(url, chatId, announce) {
+    openWatchArea();
+    showPlayer();
+    watchYoutubeMount.classList.add('hidden');
+    watchYtControls.classList.add('hidden');
+    watchVideoFile.classList.remove('hidden');
+
+    watchSession = { chatId, type: 'file', applyingRemote: false };
+    watchVideoFile.src = url;
+
+    if (announce) {
+      state.socket.emit('watch:start', { chatId, source: { type: 'file', url } });
+    }
+  }
+
+  function emitWatchState(action, time) {
+    if (!watchSession) return;
+    state.socket.emit('watch:state', { chatId: watchSession.chatId, action, time });
+  }
+
+  function closeWatchSession(announce) {
+    if (watchSession) {
+      if (watchSession.pollTimer) clearInterval(watchSession.pollTimer);
+      if (watchSession.ytPlayer) {
+        try { watchSession.ytPlayer.destroy(); } catch (e) { /* ignore */ }
+      }
+      if (announce) {
+        state.socket.emit('watch:end', { chatId: watchSession.chatId });
+      }
+    }
+    watchSession = null;
+    watchVideoFile.pause();
+    watchVideoFile.removeAttribute('src');
+    watchVideoFile.load();
+    watchYoutubeMount.innerHTML = '';
+    activeChatEl.classList.remove('watch-mode');
+    watchVideoArea.classList.add('hidden');
+    showSourcePicker();
+    watchYoutubeInput.value = '';
+  }
+
+  watchTogetherBtn.addEventListener('click', () => {
+    if (watchSession) return; // вже дивимось — повторний клік нічого не робить
+    openWatchArea();
+    showSourcePicker();
+  });
+
+  watchCloseBtn.addEventListener('click', () => closeWatchSession(true));
+
+  watchYoutubeBtn.addEventListener('click', () => {
+    const videoId = parseYoutubeVideoId(watchYoutubeInput.value);
+    if (!videoId) {
+      watchSourceStatus.textContent = 'Не вдалося розпізнати посилання на YouTube';
+      watchSourceStatus.classList.remove('hidden');
+      return;
+    }
+    beginYoutubeSession(videoId, state.activeChatId, true);
+  });
+
+  watchFileBtn.addEventListener('click', () => watchFileInput.click());
+  watchFileInput.addEventListener('change', async () => {
+    const file = watchFileInput.files[0];
+    if (!file) return;
+    watchSourceStatus.textContent = 'Завантаження…';
+    watchSourceStatus.classList.remove('hidden');
+    try {
+      const uploaded = await uploadFile(file);
+      beginFileSession(uploaded.url, state.activeChatId, true);
+    } catch (err) {
+      watchSourceStatus.textContent = err.message;
+      watchSourceStatus.classList.remove('hidden');
+    } finally {
+      watchFileInput.value = '';
+    }
+  });
+
+  watchYtPlayBtn.addEventListener('click', () => {
+    if (!watchSession || !watchSession.ytPlayer) return;
+    const state2 = watchSession.ytPlayer.getPlayerState();
+    if (state2 === YT.PlayerState.PLAYING) watchSession.ytPlayer.pauseVideo();
+    else watchSession.ytPlayer.playVideo();
+  });
+  watchYtSeek.addEventListener('mousedown', () => { if (watchSession) watchSession.seekDragging = true; });
+  watchYtSeek.addEventListener('touchstart', () => { if (watchSession) watchSession.seekDragging = true; });
+  watchYtSeek.addEventListener('change', () => {
+    if (!watchSession || !watchSession.ytPlayer) return;
+    const time = parseFloat(watchYtSeek.value);
+    watchSession.ytPlayer.seekTo(time, true);
+    watchSession.seekDragging = false;
+    if (!watchSession.applyingRemote) emitWatchState('seek', time);
+  });
+
+  watchVideoFile.addEventListener('play', () => {
+    if (!watchSession || watchSession.applyingRemote) return;
+    emitWatchState('play', watchVideoFile.currentTime);
+  });
+  watchVideoFile.addEventListener('pause', () => {
+    if (!watchSession || watchSession.applyingRemote) return;
+    emitWatchState('pause', watchVideoFile.currentTime);
+  });
+  watchVideoFile.addEventListener('seeked', () => {
+    if (!watchSession || watchSession.applyingRemote) return;
+    emitWatchState('seek', watchVideoFile.currentTime);
+  });
+
+  function applyRemoteWatchState(action, rawTime, ts) {
+    if (!watchSession) return;
+    const latencyCompensation = action === 'play' ? Math.max(0, (Date.now() - ts) / 1000) : 0;
+    const time = rawTime + latencyCompensation;
+    watchSession.applyingRemote = true;
+
+    if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
+      if (action === 'seek') {
+        watchSession.ytPlayer.seekTo(time, true);
+      } else if (action === 'play') {
+        watchSession.ytPlayer.seekTo(time, true);
+        watchSession.ytPlayer.playVideo();
+        watchYtPlayBtn.textContent = '⏸';
+      } else if (action === 'pause') {
+        watchSession.ytPlayer.pauseVideo();
+        watchSession.ytPlayer.seekTo(time, true);
+        watchYtPlayBtn.textContent = '▶';
+      }
+    } else if (watchSession.type === 'file') {
+      watchVideoFile.currentTime = time;
+      if (action === 'play') watchVideoFile.play().catch(() => {});
+      else if (action === 'pause') watchVideoFile.pause();
+    }
+
+    setTimeout(() => { if (watchSession) watchSession.applyingRemote = false; }, 300);
+  }
 
   // ---------- Init ----------
 

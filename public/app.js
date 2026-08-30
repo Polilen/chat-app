@@ -3237,6 +3237,7 @@
   const watchYtPlayBtn = el('watchYtPlayBtn');
   const watchYtSeek = el('watchYtSeek');
   const watchYtTime = el('watchYtTime');
+  const watchFullscreenBtn = el('watchFullscreenBtn');
 
   let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
   let pendingWatchInvite = null; // { chatId, source } — я запросив і чекаю відповіді
@@ -3371,6 +3372,9 @@
   }
 
   function resetWatchUI() {
+    if (document.fullscreenElement === watchPlayerWrap) {
+      document.exitFullscreen().catch(() => {});
+    }
     watchVideoFile.pause();
     watchVideoFile.removeAttribute('src');
     watchVideoFile.load();
@@ -3449,6 +3453,19 @@
   }
 
   el('watchWaitingCancelBtn').addEventListener('click', cancelPendingInvite);
+
+  // Повноекранний режим спільного перегляду — суто локальний для мене, не впливає на співрозмовника
+  // (Fullscreen API браузера завжди діє лише в межах власної вкладки/пристрою кожного)
+  watchFullscreenBtn.addEventListener('click', () => {
+    if (document.fullscreenElement === watchPlayerWrap) {
+      document.exitFullscreen().catch(() => {});
+    } else {
+      watchPlayerWrap.requestFullscreen().catch(() => {});
+    }
+  });
+  document.addEventListener('fullscreenchange', () => {
+    watchFullscreenBtn.textContent = document.fullscreenElement === watchPlayerWrap ? '⤢' : '⛶';
+  });
 
   // ---------- Модалка вхідного запрошення на спільний перегляд ----------
 

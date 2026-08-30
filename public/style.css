@@ -371,9 +371,14 @@ body {
   min-width: 0;
 }
 .active-chat.watch-mode .chat-content-wrap {
-  width: min(380px, 34vw);
+  width: min(300px, 22vw);
   flex-shrink: 0;
   border-left: 1px solid var(--border);
+}
+
+/* Список чатів ховаємо в режимі перегляду — щоб відео мало максимум простору, як на Twitch */
+#appScreen.watch-active .sidebar {
+  display: none;
 }
 
 .watch-video-header {
@@ -420,6 +425,16 @@ body {
 }
 .watch-source-row input:focus { border-color: var(--accent); }
 .watch-source-divider { color: rgba(255,255,255,0.4); font-size: 12px; }
+
+.watch-waiting-spinner {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid rgba(255,255,255,0.15);
+  border-top-color: var(--accent);
+  animation: watch-spin 0.9s linear infinite;
+}
+@keyframes watch-spin { to { transform: rotate(360deg); } }
 
 .watch-player-wrap {
   flex: 1;

@@ -429,16 +429,33 @@
       cleanupCallResources();
       hideCallUI();
     });
-    state.socket.on('watch:start', ({ chatId, source }) => {
-      if (state.activeChatId !== chatId) return;
-      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, false);
-      else if (source.type === 'file') beginFileSession(source.url, chatId, false);
+    state.socket.on('watch:invite', ({ chatId, source, fromUserId, fromUsername }) => {
+      if (state.activeChatId !== chatId || watchSession || incomingWatchInvite) return;
+      incomingWatchInvite = { chatId, source, fromUserId, fromUsername };
+      showWatchInviteModal(fromUsername, fromUserId);
+    });
+    state.socket.on('watch:accepted', ({ chatId }) => {
+      if (!pendingWatchInvite || pendingWatchInvite.chatId !== chatId) return;
+      const { source } = pendingWatchInvite;
+      pendingWatchInvite = null;
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
+      else if (source.type === 'file') beginFileSession(source.url, chatId);
+    });
+    state.socket.on('watch:declined', ({ chatId }) => {
+      if (!pendingWatchInvite || pendingWatchInvite.chatId !== chatId) return;
+      pendingWatchInvite = null;
+      resetWatchUI();
+      alert('Запрошення на спільний перегляд відхилено');
     });
     state.socket.on('watch:state', ({ chatId, action, time, ts }) => {
       if (!watchSession || watchSession.chatId !== chatId) return;
       applyRemoteWatchState(action, time, ts);
     });
     state.socket.on('watch:end', ({ chatId }) => {
+      if (incomingWatchInvite && incomingWatchInvite.chatId === chatId) {
+        hideWatchInviteModal();
+        return;
+      }
       if (!watchSession || watchSession.chatId !== chatId) return;
       closeWatchSession(false);
     });
@@ -923,6 +940,13 @@
     stopTypingSignal();
     if (watchSession && watchSession.chatId !== entry.chatId) {
       closeWatchSession(true);
+    }
+    if (pendingWatchInvite && pendingWatchInvite.chatId !== entry.chatId) {
+      cancelPendingInvite();
+    }
+    if (incomingWatchInvite && incomingWatchInvite.chatId !== entry.chatId) {
+      state.socket.emit('watch:decline', { chatId: incomingWatchInvite.chatId });
+      hideWatchInviteModal();
     }
     const chatId = entry.chatId;
     state.activeChatId = chatId;
@@ -2057,7 +2081,11 @@
 
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
+    if (!watchInviteModal.classList.contains('hidden')) {
+      state.socket.emit('watch:decline', { chatId: incomingWatchInvite.chatId });
+      hideWatchInviteModal();
+    } else if (pendingWatchInvite) cancelPendingInvite();
+    else if (!deleteChoiceModal.classList.contains('hidden')) closeDeleteChoiceModal();
     else if (userProfileModal.classList.contains('active')) closeUserProfileModal();
     else if (groupInfoModal.classList.contains('active')) closeGroupInfoModal();
     else if (!createGroupModal.classList.contains('hidden')) closeCreateGroupModal();
@@ -3196,6 +3224,7 @@
   const watchVideoArea = el('watchVideoArea');
   const watchCloseBtn = el('watchCloseBtn');
   const watchSourcePicker = el('watchSourcePicker');
+  const watchWaitingState = el('watchWaitingState');
   const watchYoutubeInput = el('watchYoutubeInput');
   const watchYoutubeBtn = el('watchYoutubeBtn');
   const watchFileInput = el('watchFileInput');
@@ -3210,6 +3239,8 @@
   const watchYtTime = el('watchYtTime');
 
   let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
+  let pendingWatchInvite = null; // { chatId, source } — я запросив і чекаю відповіді
+  let incomingWatchInvite = null; // { chatId, source, fromUserId, fromUsername } — мене запросили
   let youtubeApiPromise = null;
 
   function parseYoutubeVideoId(input) {
@@ -3256,21 +3287,31 @@
   function openWatchArea() {
     if (state.activeChatIsGroup || !state.activeChatId) return;
     activeChatEl.classList.add('watch-mode');
+    appScreen.classList.add('watch-active');
     watchVideoArea.classList.remove('hidden');
   }
 
   function showSourcePicker() {
     watchSourcePicker.classList.remove('hidden');
+    watchWaitingState.classList.add('hidden');
     watchPlayerWrap.classList.add('hidden');
     watchSourceStatus.classList.add('hidden');
   }
 
+  function showWaitingState(username) {
+    watchSourcePicker.classList.add('hidden');
+    watchWaitingState.classList.remove('hidden');
+    watchPlayerWrap.classList.add('hidden');
+    el('watchWaitingUsername').textContent = username;
+  }
+
   function showPlayer() {
     watchSourcePicker.classList.add('hidden');
+    watchWaitingState.classList.add('hidden');
     watchPlayerWrap.classList.remove('hidden');
   }
 
-  async function beginYoutubeSession(videoId, chatId, announce) {
+  async function beginYoutubeSession(videoId, chatId) {
     openWatchArea();
     showPlayer();
     watchVideoFile.classList.add('hidden');
@@ -3311,13 +3352,9 @@
       watchYtSeek.value = String(cur);
       watchYtTime.textContent = `${formatDuration(cur)} / ${formatDuration(dur)}`;
     }, 500);
-
-    if (announce) {
-      state.socket.emit('watch:start', { chatId, source: { type: 'youtube', videoId } });
-    }
   }
 
-  function beginFileSession(url, chatId, announce) {
+  function beginFileSession(url, chatId) {
     openWatchArea();
     showPlayer();
     watchYoutubeMount.classList.add('hidden');
@@ -3326,15 +3363,23 @@
 
     watchSession = { chatId, type: 'file', applyingRemote: false };
     watchVideoFile.src = url;
-
-    if (announce) {
-      state.socket.emit('watch:start', { chatId, source: { type: 'file', url } });
-    }
   }
 
   function emitWatchState(action, time) {
     if (!watchSession) return;
     state.socket.emit('watch:state', { chatId: watchSession.chatId, action, time });
+  }
+
+  function resetWatchUI() {
+    watchVideoFile.pause();
+    watchVideoFile.removeAttribute('src');
+    watchVideoFile.load();
+    watchYoutubeMount.innerHTML = '';
+    activeChatEl.classList.remove('watch-mode');
+    appScreen.classList.remove('watch-active');
+    watchVideoArea.classList.add('hidden');
+    showSourcePicker();
+    watchYoutubeInput.value = '';
   }
 
   function closeWatchSession(announce) {
@@ -3348,23 +3393,26 @@
       }
     }
     watchSession = null;
-    watchVideoFile.pause();
-    watchVideoFile.removeAttribute('src');
-    watchVideoFile.load();
-    watchYoutubeMount.innerHTML = '';
-    activeChatEl.classList.remove('watch-mode');
-    watchVideoArea.classList.add('hidden');
-    showSourcePicker();
-    watchYoutubeInput.value = '';
+    resetWatchUI();
+  }
+
+  function cancelPendingInvite() {
+    if (!pendingWatchInvite) return;
+    state.socket.emit('watch:end', { chatId: pendingWatchInvite.chatId });
+    pendingWatchInvite = null;
+    resetWatchUI();
   }
 
   watchTogetherBtn.addEventListener('click', () => {
-    if (watchSession) return; // вже дивимось — повторний клік нічого не робить
+    if (watchSession || pendingWatchInvite) return; // вже дивимось або чекаємо відповіді — повторний клік нічого не робить
     openWatchArea();
     showSourcePicker();
   });
 
-  watchCloseBtn.addEventListener('click', () => closeWatchSession(true));
+  watchCloseBtn.addEventListener('click', () => {
+    if (pendingWatchInvite) cancelPendingInvite();
+    else closeWatchSession(true);
+  });
 
   watchYoutubeBtn.addEventListener('click', () => {
     const videoId = parseYoutubeVideoId(watchYoutubeInput.value);
@@ -3373,7 +3421,7 @@
       watchSourceStatus.classList.remove('hidden');
       return;
     }
-    beginYoutubeSession(videoId, state.activeChatId, true);
+    sendWatchInvite({ type: 'youtube', videoId });
   });
 
   watchFileBtn.addEventListener('click', () => watchFileInput.click());
@@ -3384,13 +3432,54 @@
     watchSourceStatus.classList.remove('hidden');
     try {
       const uploaded = await uploadFile(file);
-      beginFileSession(uploaded.url, state.activeChatId, true);
+      sendWatchInvite({ type: 'file', url: uploaded.url });
     } catch (err) {
       watchSourceStatus.textContent = err.message;
       watchSourceStatus.classList.remove('hidden');
     } finally {
       watchFileInput.value = '';
     }
+  });
+
+  function sendWatchInvite(source) {
+    if (!state.activeChatWith) return;
+    pendingWatchInvite = { chatId: state.activeChatId, source };
+    showWaitingState(state.activeChatWith.username);
+    state.socket.emit('watch:invite', { chatId: state.activeChatId, source });
+  }
+
+  el('watchWaitingCancelBtn').addEventListener('click', cancelPendingInvite);
+
+  // ---------- Модалка вхідного запрошення на спільний перегляд ----------
+
+  const watchInviteModal = el('watchInviteModal');
+  const watchInviteAvatar = el('watchInviteAvatar');
+  const watchInviteUsername = el('watchInviteUsername');
+
+  function showWatchInviteModal(fromUsername, fromUserId) {
+    renderAvatarInto(watchInviteAvatar, fromUsername, state.activeChatWith && state.activeChatWith.id === fromUserId ? state.activeChatWith.avatarUrl : null);
+    watchInviteUsername.textContent = fromUsername;
+    watchInviteModal.classList.remove('hidden');
+  }
+
+  function hideWatchInviteModal() {
+    watchInviteModal.classList.add('hidden');
+    incomingWatchInvite = null;
+  }
+
+  el('watchInviteAcceptBtn').addEventListener('click', () => {
+    if (!incomingWatchInvite) return;
+    const { chatId, source } = incomingWatchInvite;
+    state.socket.emit('watch:accept', { chatId });
+    hideWatchInviteModal();
+    if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
+    else if (source.type === 'file') beginFileSession(source.url, chatId);
+  });
+
+  el('watchInviteDeclineBtn').addEventListener('click', () => {
+    if (!incomingWatchInvite) return;
+    state.socket.emit('watch:decline', { chatId: incomingWatchInvite.chatId });
+    hideWatchInviteModal();
   });
 
   watchYtPlayBtn.addEventListener('click', () => {

@@ -78,6 +78,11 @@
             <button type="button" id="watchFileBtn" class="modal-action-btn">🎬 Завантажити відеофайл</button>
             <p id="watchSourceStatus" class="forward-status hidden" style="border:none"></p>
           </div>
+          <div id="watchWaitingState" class="watch-source-picker hidden">
+            <div class="watch-waiting-spinner"></div>
+            <p class="watch-source-hint">Очікуємо, поки <span id="watchWaitingUsername"></span> прийме запрошення…</p>
+            <button type="button" id="watchWaitingCancelBtn" class="modal-action-btn">Скасувати</button>
+          </div>
           <div id="watchPlayerWrap" class="watch-player-wrap hidden">
             <div id="watchYoutubeMount" class="watch-youtube-mount hidden"></div>
             <video id="watchVideoFile" class="watch-video-file hidden" playsinline></video>
@@ -240,6 +245,19 @@
         <button type="button" id="callMuteBtn" class="call-action-btn mute hidden" title="Вимкнути мікрофон">🎤</button>
         <button type="button" id="callScreenShareBtn" class="call-action-btn screen hidden" title="Демонстрація екрана">🖥️</button>
         <button type="button" id="callEndBtn" class="call-action-btn end hidden" title="Завершити">📞</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Запрошення на спільний перегляд відео -->
+  <div id="watchInviteModal" class="call-modal hidden">
+    <div class="call-modal-content">
+      <div id="watchInviteAvatar" class="avatar-slot avatar-slot-large"></div>
+      <div id="watchInviteUsername" class="profile-username"></div>
+      <div class="call-status-text">запрошує подивитись відео разом</div>
+      <div class="call-actions">
+        <button type="button" id="watchInviteDeclineBtn" class="call-action-btn decline" title="Відхилити">✕</button>
+        <button type="button" id="watchInviteAcceptBtn" class="call-action-btn accept" title="Прийняти">🎬</button>
       </div>
     </div>
   </div>

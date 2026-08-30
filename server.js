@@ -903,17 +903,47 @@ io.on('connection', (socket) => {
     return otherUserId(chat, myId);
   }
 
-  socket.on('watch:start', (payload) => {
+  socket.on('watch:invite', (payload) => {
     try {
       const { chatId, source } = payload || {};
       if (!chatId || !source) return;
       const otherId = watchDirectPartner(chatId, socket.user.id);
       if (!otherId) return;
-      io.to(`user:${otherId}`).emit('watch:start', { chatId, source, fromUserId: socket.user.id });
+      io.to(`user:${otherId}`).emit('watch:invite', {
+        chatId,
+        source,
+        fromUserId: socket.user.id,
+        fromUsername: socket.user.username,
+      });
     } catch (err) {
       console.error(err);
     }
   });
+
+  socket.on('watch:accept', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:accepted', { chatId, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('watch:decline', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:declined', { chatId, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
 
   socket.on('watch:state', (payload) => {
     try {

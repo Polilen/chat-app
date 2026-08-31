@@ -3282,13 +3282,6 @@
     return null;
   }
 
-  function formatDuration(totalSeconds) {
-    const secs = Math.max(0, Math.floor(totalSeconds || 0));
-    const mm = Math.floor(secs / 60);
-    const ss = String(secs % 60).padStart(2, '0');
-    return `${mm}:${ss}`;
-  }
-
   function loadYoutubeApi() {
     if (window.YT && window.YT.Player) return Promise.resolve();
     if (youtubeApiPromise) return youtubeApiPromise;
@@ -3338,10 +3331,22 @@
     watchVideoFile.classList.add('hidden');
     watchYoutubeMount.classList.remove('hidden');
     watchYtControls.classList.remove('hidden');
+    watchYtPlayBtn.textContent = '▶';
+    watchYtSeek.value = '0';
+    watchYtTime.textContent = '0:00 / 0:00';
 
     await loadYoutubeApi();
 
-    watchSession = { chatId, type: 'youtube', ytPlayer: null, applyingRemote: false, pollTimer: null, seekDragging: false };
+    watchSession = {
+      chatId,
+      type: 'youtube',
+      ytPlayer: null,
+      applyingRemote: false,
+      pollTimer: null,
+      seekDragging: false,
+      suppressEmitUntil: 0,
+      lastYtPlayerState: null,
+    };
 
     watchYoutubeMount.innerHTML = '<div id="watchYoutubeMountInner"></div>';
     const ytPlayer = new YT.Player('watchYoutubeMountInner', {
@@ -3354,13 +3359,25 @@
           ytPlayer.setVolume(Number(watchYtVolume.value));
         },
         onStateChange: (e) => {
-          if (!watchSession || watchSession.applyingRemote) return;
+          if (!watchSession) return;
+          const prevState = watchSession.lastYtPlayerState;
+          watchSession.lastYtPlayerState = e.data;
+
+          if (e.data === YT.PlayerState.PLAYING) watchYtPlayBtn.textContent = '⏸';
+          else if (e.data === YT.PlayerState.PAUSED) watchYtPlayBtn.textContent = '▶';
+
+          if (watchSession.applyingRemote) return;
+          if (Date.now() < (watchSession.suppressEmitUntil || 0)) return;
+          // Перехід із "буферизації" (стан 3) у "відтворення" — це не нова дія людини, а просто
+          // завершення довантаження після перемотки/затримки мережі. Якщо транслювати цей момент,
+          // час у ньому іноді на пару секунд менший за реальний (YouTube прив'язує позицію до
+          // найближчого ключового кадру) — саме це й спричиняло "відкат назад" у співрозмовника
+          if (e.data === YT.PlayerState.PLAYING && prevState === YT.PlayerState.BUFFERING) return;
+
           if (e.data === YT.PlayerState.PLAYING) {
             emitWatchState('play', ytPlayer.getCurrentTime());
-            watchYtPlayBtn.textContent = '⏸';
           } else if (e.data === YT.PlayerState.PAUSED) {
             emitWatchState('pause', ytPlayer.getCurrentTime());
-            watchYtPlayBtn.textContent = '▶';
           }
         },
       },
@@ -3381,11 +3398,15 @@
     openWatchArea();
     showPlayer();
     watchYoutubeMount.classList.add('hidden');
-    watchYtControls.classList.add('hidden');
     watchVideoFile.classList.remove('hidden');
+    watchYtControls.classList.remove('hidden'); // та сама панель керування, що й для YouTube — тепер працює для обох
 
-    watchSession = { chatId, type: 'file', applyingRemote: false };
+    watchSession = { chatId, type: 'file', applyingRemote: false, suppressEmitUntil: 0 };
     watchVideoFile.src = url;
+    watchVideoFile.volume = Number(watchYtVolume.value) / 100;
+    watchYtPlayBtn.textContent = '▶';
+    watchYtSeek.value = '0';
+    watchYtTime.textContent = '0:00 / 0:00';
   }
 
   function emitWatchState(action, time) {
@@ -3530,41 +3551,66 @@
   });
 
   watchYtPlayBtn.addEventListener('click', () => {
-    if (!watchSession || !watchSession.ytPlayer) return;
-    const state2 = watchSession.ytPlayer.getPlayerState();
-    if (state2 === YT.PlayerState.PLAYING) watchSession.ytPlayer.pauseVideo();
-    else watchSession.ytPlayer.playVideo();
+    if (!watchSession) return;
+    if (watchSession.type === 'youtube') {
+      if (!watchSession.ytPlayer) return;
+      const ytState = watchSession.ytPlayer.getPlayerState();
+      if (ytState === YT.PlayerState.PLAYING) watchSession.ytPlayer.pauseVideo();
+      else watchSession.ytPlayer.playVideo();
+    } else if (watchSession.type === 'file') {
+      if (watchVideoFile.paused) watchVideoFile.play().catch(() => {});
+      else watchVideoFile.pause();
+    }
   });
   watchYtSeek.addEventListener('mousedown', () => { if (watchSession) watchSession.seekDragging = true; });
   watchYtSeek.addEventListener('touchstart', () => { if (watchSession) watchSession.seekDragging = true; });
   watchYtSeek.addEventListener('change', () => {
-    if (!watchSession || !watchSession.ytPlayer) return;
+    if (!watchSession) return;
     const time = parseFloat(watchYtSeek.value);
-    watchSession.ytPlayer.seekTo(time, true);
+    // Перемотка часто спричиняє коротку буферизацію — на цей час "заморожуємо" трансляцію власних
+    // подій, щоб проміжні стани буферизації не розцінювались як нова дія й не відкидали час назад
+    // ні в мене, ні (після трансляції) у співрозмовника
+    watchSession.suppressEmitUntil = Date.now() + 2000;
+    if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
+      watchSession.ytPlayer.seekTo(time, true);
+    } else if (watchSession.type === 'file') {
+      watchVideoFile.currentTime = time;
+    }
     watchSession.seekDragging = false;
     if (!watchSession.applyingRemote) emitWatchState('seek', time);
   });
 
-  // Гучність YouTube-плеєра — суто локальна для мене, не транслюється й ніяк не впливає на співрозмовника
+  // Гучність — суто локальна для мене, у кожного учасника своя, ніколи не транслюється й не синхронізується
   watchYtVolume.value = localStorage.getItem('watchYtVolume') || '100';
   watchYtVolume.addEventListener('input', () => {
     localStorage.setItem('watchYtVolume', watchYtVolume.value);
-    if (watchSession && watchSession.ytPlayer) {
+    if (!watchSession) return;
+    if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
       watchSession.ytPlayer.setVolume(Number(watchYtVolume.value));
+    } else if (watchSession.type === 'file') {
+      watchVideoFile.volume = Number(watchYtVolume.value) / 100;
     }
   });
 
+  watchVideoFile.addEventListener('loadedmetadata', () => {
+    watchYtSeek.max = String(watchVideoFile.duration || 100);
+  });
+  watchVideoFile.addEventListener('timeupdate', () => {
+    if (!watchSession || watchSession.type !== 'file' || watchSession.seekDragging) return;
+    watchYtSeek.value = String(watchVideoFile.currentTime);
+    watchYtTime.textContent = `${formatDuration(watchVideoFile.currentTime)} / ${formatDuration(watchVideoFile.duration)}`;
+  });
 
   watchVideoFile.addEventListener('play', () => {
-    if (!watchSession || watchSession.applyingRemote) return;
+    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
     emitWatchState('play', watchVideoFile.currentTime);
   });
   watchVideoFile.addEventListener('pause', () => {
-    if (!watchSession || watchSession.applyingRemote) return;
+    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
     emitWatchState('pause', watchVideoFile.currentTime);
   });
   watchVideoFile.addEventListener('seeked', () => {
-    if (!watchSession || watchSession.applyingRemote) return;
+    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
     emitWatchState('seek', watchVideoFile.currentTime);
   });
 
@@ -3573,6 +3619,9 @@
     const latencyCompensation = action === 'play' ? Math.max(0, (Date.now() - ts) / 1000) : 0;
     const time = rawTime + latencyCompensation;
     watchSession.applyingRemote = true;
+    // Застосування чужого стану теж викликає перемотку/буферизацію — так само заморожуємо
+    // трансляцію власних подій на цей час, щоб не було "пінг-понгу" зі старими значеннями часу
+    watchSession.suppressEmitUntil = Date.now() + 2000;
 
     if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
       if (action === 'seek') {
@@ -3592,7 +3641,9 @@
       else if (action === 'pause') watchVideoFile.pause();
     }
 
-    setTimeout(() => { if (watchSession) watchSession.applyingRemote = false; }, 300);
+    // Достатньо довге вікно, щоб пережити типову буферизацію після перемотки на повільнішій мережі,
+    // не переплутавши це відновлення зі справжньою локальною дією людини
+    setTimeout(() => { if (watchSession) watchSession.applyingRemote = false; }, 1800);
   }
 
   // ---------- Init ----------

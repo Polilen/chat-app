@@ -1028,6 +1028,46 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Заміна відео посеред уже узгодженого спільного перегляду — на відміну від watch:invite,
+  // тут НЕ треба повторного прийняття (людина вже погодилась дивитись разом раніше), і
+  // друга сторона не виходить з режиму перегляду, а лише бачить "співрозмовник обирає відео…"
+  socket.on('watch:switching', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      if (!chatId) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+      io.to(`user:${otherId}`).emit('watch:switching', { chatId, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('watch:switch-video', (payload) => {
+    try {
+      const { chatId, source } = payload || {};
+      if (!chatId || !source) return;
+      const otherId = watchDirectPartner(chatId, socket.user.id);
+      if (!otherId) return;
+
+      const prevSession = activeWatchSessions.get(chatId);
+      if (prevSession) {
+        insertSystemMessage(
+          chatId,
+          socket.user.id,
+          `Спільний перегляд тривав ${formatDurationText(Date.now() - prevSession.startedAt)}`,
+          'watch_ended'
+        );
+      }
+      activeWatchSessions.set(chatId, { startedAt: Date.now() });
+
+      io.to(`user:${otherId}`).emit('watch:switch-video', { chatId, source, fromUserId: socket.user.id });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
     const chatId = payload && payload.chatId ? Number(payload.chatId) : null;

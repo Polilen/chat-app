@@ -463,8 +463,38 @@
         hideWatchInviteModal();
         return;
       }
+      if (isPartnerChoosing && partnerChoosingChatId === chatId) {
+        // Співрозмовник почав обирати заміну, але передумав і вийшов зовсім — не лишаємось чекати вічно
+        isPartnerChoosing = false;
+        partnerChoosingChatId = null;
+        resetWatchUI();
+        return;
+      }
+      if (isSwitchingVideo && switchingChatId === chatId) {
+        // Це я саме зараз обираю заміну, а співрозмовник, який чекав, тим часом вийшов зовсім
+        isSwitchingVideo = false;
+        switchingChatId = null;
+        resetWatchUI();
+        return;
+      }
       if (!watchSession || watchSession.chatId !== chatId) return;
       closeWatchSession(false);
+    });
+    state.socket.on('watch:switching', ({ chatId }) => {
+      if (!watchSession || watchSession.chatId !== chatId) return;
+      // НЕ виходимо з режиму перегляду — просто зупиняємо поточне відео й чекаємо нового вибору
+      stopCurrentPlayer();
+      watchSession = null;
+      isPartnerChoosing = true;
+      partnerChoosingChatId = chatId;
+      showChoosingState();
+    });
+    state.socket.on('watch:switch-video', ({ chatId, source }) => {
+      if (!isPartnerChoosing || partnerChoosingChatId !== chatId) return;
+      isPartnerChoosing = false;
+      partnerChoosingChatId = null;
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
+      else if (source.type === 'file') beginFileSession(source.url, chatId);
     });
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
       if (state.activeChatId !== chatId) return;
@@ -954,6 +984,16 @@
     if (incomingWatchInvite && incomingWatchInvite.chatId !== entry.chatId) {
       state.socket.emit('watch:decline', { chatId: incomingWatchInvite.chatId });
       hideWatchInviteModal();
+    }
+    if (isSwitchingVideo && switchingChatId !== entry.chatId) {
+      state.socket.emit('watch:end', { chatId: switchingChatId });
+      isSwitchingVideo = false;
+      switchingChatId = null;
+    }
+    if (isPartnerChoosing && partnerChoosingChatId !== entry.chatId) {
+      state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
+      isPartnerChoosing = false;
+      partnerChoosingChatId = null;
     }
     const chatId = entry.chatId;
     state.activeChatId = chatId;
@@ -3245,6 +3285,7 @@
   const watchChangeBtn = el('watchChangeBtn');
   const watchSourcePicker = el('watchSourcePicker');
   const watchWaitingState = el('watchWaitingState');
+  const watchChoosingState = el('watchChoosingState');
   const watchYoutubeInput = el('watchYoutubeInput');
   const watchYoutubeBtn = el('watchYoutubeBtn');
   const watchFileInput = el('watchFileInput');
@@ -3263,6 +3304,10 @@
   let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
   let pendingWatchInvite = null; // { chatId, source } — я запросив і чекаю відповіді
   let incomingWatchInvite = null; // { chatId, source, fromUserId, fromUsername } — мене запросили
+  let isSwitchingVideo = false; // я вже дивлюсь разом і зараз обираю ІНШЕ відео (без повторного запрошення)
+  let switchingChatId = null;
+  let isPartnerChoosing = false; // співрозмовник зараз обирає нове відео — я лише чекаю, не виходячи з режиму
+  let partnerChoosingChatId = null;
   let youtubeApiPromise = null;
 
   function parseYoutubeVideoId(input) {
@@ -3309,6 +3354,7 @@
   function showSourcePicker() {
     watchSourcePicker.classList.remove('hidden');
     watchWaitingState.classList.add('hidden');
+    watchChoosingState.classList.add('hidden');
     watchPlayerWrap.classList.add('hidden');
     watchSourceStatus.classList.add('hidden');
     watchChangeBtn.classList.add('hidden'); // нема ще жодного відео — нічого міняти
@@ -3317,14 +3363,26 @@
   function showWaitingState(username) {
     watchSourcePicker.classList.add('hidden');
     watchWaitingState.classList.remove('hidden');
+    watchChoosingState.classList.add('hidden');
     watchPlayerWrap.classList.add('hidden');
     el('watchWaitingUsername').textContent = username;
     watchChangeBtn.classList.remove('hidden');
   }
 
+  // Співрозмовник зараз обирає нове відео (після його кліку на 🔄) — ми лишаємось у режимі
+  // перегляду, просто чекаємо, нічого не закриваючи й нікуди не виходячи
+  function showChoosingState() {
+    watchSourcePicker.classList.add('hidden');
+    watchWaitingState.classList.add('hidden');
+    watchChoosingState.classList.remove('hidden');
+    watchPlayerWrap.classList.add('hidden');
+    watchChangeBtn.classList.add('hidden');
+  }
+
   function showPlayer() {
     watchSourcePicker.classList.add('hidden');
     watchWaitingState.classList.add('hidden');
+    watchChoosingState.classList.add('hidden');
     watchPlayerWrap.classList.remove('hidden');
     watchChangeBtn.classList.remove('hidden');
   }
@@ -3486,15 +3544,23 @@
     if (!watchSession && !pendingWatchInvite) return;
     if (!confirm('Поставити інше відео? Поточний перегляд завершиться для обох.')) return;
     if (pendingWatchInvite) {
+      // Ще навіть не почали дивитись разом (чекали прийняття) — просто скасовуємо запрошення, як і раніше
       state.socket.emit('watch:end', { chatId: pendingWatchInvite.chatId });
       pendingWatchInvite = null;
+      showSourcePicker();
+      watchYoutubeInput.value = '';
     } else if (watchSession) {
-      state.socket.emit('watch:end', { chatId: watchSession.chatId });
+      // Дивимось разом уже узгоджено раніше — тому повторне запрошення не потрібне.
+      // Повідомляємо співрозмовника "я обираю нове відео", щоб він НЕ вийшов з режиму перегляду,
+      // а лишень зачекав; новий вибір надішлемо напряму (watch:switch-video), без нового прийняття
+      switchingChatId = watchSession.chatId;
+      state.socket.emit('watch:switching', { chatId: switchingChatId });
       stopCurrentPlayer();
       watchSession = null;
+      isSwitchingVideo = true;
+      showSourcePicker();
+      watchYoutubeInput.value = '';
     }
-    showSourcePicker();
-    watchYoutubeInput.value = '';
   }
 
   watchTogetherBtn.addEventListener('click', () => {
@@ -3504,13 +3570,32 @@
   });
 
   watchCloseBtn.addEventListener('click', () => {
-    // Якщо вже щось запущено (або ще чекаємо відповіді) — перепитуємо, бо перегляд зупиниться в обох.
-    // Якщо ж людина ще на екрані вибору джерела — там і зупиняти нічого, питати нема сенсу
-    if ((watchSession || pendingWatchInvite) && !confirm('Завершити перегляд? Відео зупиниться для обох.')) {
+    // Якщо вже щось запущено, ще чекаємо відповіді, або зараз триває заміна (в будь-яку сторону) —
+    // перепитуємо, бо перегляд зупиниться в обох. Якщо ж людина ще на початковому екрані вибору —
+    // питати нема сенсу
+    if ((watchSession || pendingWatchInvite || isSwitchingVideo || isPartnerChoosing)
+      && !confirm('Завершити перегляд? Відео зупиниться для обох.')) {
       return;
     }
-    if (pendingWatchInvite) cancelPendingInvite();
-    else closeWatchSession(true);
+    if (pendingWatchInvite) {
+      cancelPendingInvite();
+    } else if (isSwitchingVideo) {
+      // Розпочали обирати заміну (співрозмовник уже чекає з повідомленням "обирає відео…"),
+      // але передумали — обов'язково повідомляємо watch:end, інакше він так і лишиться чекати
+      state.socket.emit('watch:end', { chatId: switchingChatId });
+      isSwitchingVideo = false;
+      switchingChatId = null;
+      resetWatchUI();
+    } else if (isPartnerChoosing) {
+      // Ми пасивно чекаємо, поки співрозмовник обирає заміну, але самі вирішили вийти —
+      // повідомляємо його теж, інакше він лишиться чекати марно
+      state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
+      isPartnerChoosing = false;
+      partnerChoosingChatId = null;
+      resetWatchUI();
+    } else {
+      closeWatchSession(true);
+    }
   });
 
   watchChangeBtn.addEventListener('click', changeVideo);
@@ -3522,7 +3607,7 @@
       watchSourceStatus.classList.remove('hidden');
       return;
     }
-    sendWatchInvite({ type: 'youtube', videoId });
+    chooseWatchSource({ type: 'youtube', videoId });
   });
 
   watchFileBtn.addEventListener('click', () => watchFileInput.click());
@@ -3533,7 +3618,7 @@
     watchSourceStatus.classList.remove('hidden');
     try {
       const uploaded = await uploadFile(file);
-      sendWatchInvite({ type: 'file', url: uploaded.url });
+      chooseWatchSource({ type: 'file', url: uploaded.url });
     } catch (err) {
       watchSourceStatus.textContent = err.message;
       watchSourceStatus.classList.remove('hidden');
@@ -3547,6 +3632,21 @@
     pendingWatchInvite = { chatId: state.activeChatId, source };
     showWaitingState(state.activeChatWith.username);
     state.socket.emit('watch:invite', { chatId: state.activeChatId, source });
+  }
+
+  // Спільна точка вибору джерела: якщо це заміна відео посеред уже узгодженого перегляду —
+  // одразу транслюємо напряму без нового запрошення; інакше — звичайний цикл запросити/прийняти
+  function chooseWatchSource(source) {
+    if (isSwitchingVideo) {
+      const chatId = switchingChatId;
+      isSwitchingVideo = false;
+      switchingChatId = null;
+      state.socket.emit('watch:switch-video', { chatId, source });
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
+      else if (source.type === 'file') beginFileSession(source.url, chatId);
+      return;
+    }
+    sendWatchInvite(source);
   }
 
   el('watchWaitingCancelBtn').addEventListener('click', cancelPendingInvite);

@@ -486,8 +486,11 @@ body {
   justify-content: center;
 }
 .watch-yt-controls input[type="range"] {
-  flex: 1;
   accent-color: var(--accent);
+}
+#watchYtSeek {
+  flex: 1;
+  min-width: 0;
 }
 .watch-yt-time {
   color: #fff;
@@ -501,8 +504,9 @@ body {
   flex-shrink: 0;
 }
 .watch-yt-volume {
-  width: 70px;
-  flex-shrink: 0;
+  flex: 0 0 10%;
+  min-width: 50px;
+  max-width: 90px;
   accent-color: var(--accent);
 }
 

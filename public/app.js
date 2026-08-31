@@ -3344,7 +3344,6 @@
       applyingRemote: false,
       pollTimer: null,
       seekDragging: false,
-      suppressEmitUntil: 0,
       lastYtPlayerState: null,
     };
 
@@ -3360,19 +3359,15 @@
         },
         onStateChange: (e) => {
           if (!watchSession) return;
-          const prevState = watchSession.lastYtPlayerState;
           watchSession.lastYtPlayerState = e.data;
 
           if (e.data === YT.PlayerState.PLAYING) watchYtPlayBtn.textContent = '⏸';
           else if (e.data === YT.PlayerState.PAUSED) watchYtPlayBtn.textContent = '▶';
 
+          // Придушуємо трансляцію лише поки САМЕ ЗАРАЗ застосовуємо чужий стан (applyingRemote) —
+          // це запобігає "пінг-понгу", коли наша ж реакція на подію співрозмовника відсилається
+          // йому назад. Звичайні власні дії (плей/пауза/перемотка) завжди транслюються одразу
           if (watchSession.applyingRemote) return;
-          if (Date.now() < (watchSession.suppressEmitUntil || 0)) return;
-          // Перехід із "буферизації" (стан 3) у "відтворення" — це не нова дія людини, а просто
-          // завершення довантаження після перемотки/затримки мережі. Якщо транслювати цей момент,
-          // час у ньому іноді на пару секунд менший за реальний (YouTube прив'язує позицію до
-          // найближчого ключового кадру) — саме це й спричиняло "відкат назад" у співрозмовника
-          if (e.data === YT.PlayerState.PLAYING && prevState === YT.PlayerState.BUFFERING) return;
 
           if (e.data === YT.PlayerState.PLAYING) {
             emitWatchState('play', ytPlayer.getCurrentTime());
@@ -3401,7 +3396,7 @@
     watchVideoFile.classList.remove('hidden');
     watchYtControls.classList.remove('hidden'); // та сама панель керування, що й для YouTube — тепер працює для обох
 
-    watchSession = { chatId, type: 'file', applyingRemote: false, suppressEmitUntil: 0 };
+    watchSession = { chatId, type: 'file', applyingRemote: false };
     watchVideoFile.src = url;
     watchVideoFile.volume = Number(watchYtVolume.value) / 100;
     watchYtPlayBtn.textContent = '▶';
@@ -3567,10 +3562,6 @@
   watchYtSeek.addEventListener('change', () => {
     if (!watchSession) return;
     const time = parseFloat(watchYtSeek.value);
-    // Перемотка часто спричиняє коротку буферизацію — на цей час "заморожуємо" трансляцію власних
-    // подій, щоб проміжні стани буферизації не розцінювались як нова дія й не відкидали час назад
-    // ні в мене, ні (після трансляції) у співрозмовника
-    watchSession.suppressEmitUntil = Date.now() + 2000;
     if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
       watchSession.ytPlayer.seekTo(time, true);
     } else if (watchSession.type === 'file') {
@@ -3602,15 +3593,15 @@
   });
 
   watchVideoFile.addEventListener('play', () => {
-    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
+    if (!watchSession || watchSession.applyingRemote) return;
     emitWatchState('play', watchVideoFile.currentTime);
   });
   watchVideoFile.addEventListener('pause', () => {
-    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
+    if (!watchSession || watchSession.applyingRemote) return;
     emitWatchState('pause', watchVideoFile.currentTime);
   });
   watchVideoFile.addEventListener('seeked', () => {
-    if (!watchSession || watchSession.applyingRemote || Date.now() < (watchSession.suppressEmitUntil || 0)) return;
+    if (!watchSession || watchSession.applyingRemote) return;
     emitWatchState('seek', watchVideoFile.currentTime);
   });
 
@@ -3618,10 +3609,10 @@
     if (!watchSession) return;
     const latencyCompensation = action === 'play' ? Math.max(0, (Date.now() - ts) / 1000) : 0;
     const time = rawTime + latencyCompensation;
+    // Поки застосовуємо чужий стан — наші ж обробники подій (onStateChange/play/pause/seeked)
+    // спрацюють у відповідь на ці програмні виклики; applyingRemote не дає їм відправити це
+    // назад як "нову" дію, інакше вийшов би пінг-понг
     watchSession.applyingRemote = true;
-    // Застосування чужого стану теж викликає перемотку/буферизацію — так само заморожуємо
-    // трансляцію власних подій на цей час, щоб не було "пінг-понгу" зі старими значеннями часу
-    watchSession.suppressEmitUntil = Date.now() + 2000;
 
     if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
       if (action === 'seek') {

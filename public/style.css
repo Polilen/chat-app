@@ -392,6 +392,7 @@ body {
   flex-shrink: 0;
 }
 .watch-video-title { font-weight: 700; font-size: 14px; color: #fff; }
+.watch-video-header-actions { display: flex; align-items: center; gap: 6px; }
 .watch-video-header .icon-btn { color: #fff; }
 
 .watch-source-picker {

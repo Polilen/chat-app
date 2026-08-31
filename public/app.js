@@ -3242,6 +3242,7 @@
   const watchTogetherBtn = el('watchTogetherBtn');
   const watchVideoArea = el('watchVideoArea');
   const watchCloseBtn = el('watchCloseBtn');
+  const watchChangeBtn = el('watchChangeBtn');
   const watchSourcePicker = el('watchSourcePicker');
   const watchWaitingState = el('watchWaitingState');
   const watchYoutubeInput = el('watchYoutubeInput');
@@ -3310,6 +3311,7 @@
     watchWaitingState.classList.add('hidden');
     watchPlayerWrap.classList.add('hidden');
     watchSourceStatus.classList.add('hidden');
+    watchChangeBtn.classList.add('hidden'); // нема ще жодного відео — нічого міняти
   }
 
   function showWaitingState(username) {
@@ -3317,12 +3319,14 @@
     watchWaitingState.classList.remove('hidden');
     watchPlayerWrap.classList.add('hidden');
     el('watchWaitingUsername').textContent = username;
+    watchChangeBtn.classList.remove('hidden');
   }
 
   function showPlayer() {
     watchSourcePicker.classList.add('hidden');
     watchWaitingState.classList.add('hidden');
     watchPlayerWrap.classList.remove('hidden');
+    watchChangeBtn.classList.remove('hidden');
   }
 
   async function beginYoutubeSession(videoId, chatId) {
@@ -3436,7 +3440,13 @@
     state.socket.emit('watch:state', { chatId: watchSession.chatId, action, time });
   }
 
-  function resetWatchUI() {
+  function stopCurrentPlayer() {
+    if (watchSession) {
+      if (watchSession.pollTimer) clearInterval(watchSession.pollTimer);
+      if (watchSession.ytPlayer) {
+        try { watchSession.ytPlayer.destroy(); } catch (e) { /* ignore */ }
+      }
+    }
     if (document.fullscreenElement === watchPlayerWrap) {
       document.exitFullscreen().catch(() => {});
     }
@@ -3444,6 +3454,10 @@
     watchVideoFile.removeAttribute('src');
     watchVideoFile.load();
     watchYoutubeMount.innerHTML = '';
+  }
+
+  function resetWatchUI() {
+    stopCurrentPlayer();
     activeChatEl.classList.remove('watch-mode');
     appScreen.classList.remove('watch-active');
     watchVideoArea.classList.add('hidden');
@@ -3452,14 +3466,8 @@
   }
 
   function closeWatchSession(announce) {
-    if (watchSession) {
-      if (watchSession.pollTimer) clearInterval(watchSession.pollTimer);
-      if (watchSession.ytPlayer) {
-        try { watchSession.ytPlayer.destroy(); } catch (e) { /* ignore */ }
-      }
-      if (announce) {
-        state.socket.emit('watch:end', { chatId: watchSession.chatId });
-      }
+    if (watchSession && announce) {
+      state.socket.emit('watch:end', { chatId: watchSession.chatId });
     }
     watchSession = null;
     resetWatchUI();
@@ -3472,6 +3480,23 @@
     resetWatchUI();
   }
 
+  // Кнопка "поставити інше відео" — завершує поточний перегляд (як і хрестик), але замість
+  // повного закриття одразу показує вибір нового джерела, не виходячи з режиму перегляду
+  function changeVideo() {
+    if (!watchSession && !pendingWatchInvite) return;
+    if (!confirm('Поставити інше відео? Поточний перегляд завершиться для обох.')) return;
+    if (pendingWatchInvite) {
+      state.socket.emit('watch:end', { chatId: pendingWatchInvite.chatId });
+      pendingWatchInvite = null;
+    } else if (watchSession) {
+      state.socket.emit('watch:end', { chatId: watchSession.chatId });
+      stopCurrentPlayer();
+      watchSession = null;
+    }
+    showSourcePicker();
+    watchYoutubeInput.value = '';
+  }
+
   watchTogetherBtn.addEventListener('click', () => {
     if (watchSession || pendingWatchInvite) return; // вже дивимось або чекаємо відповіді — повторний клік нічого не робить
     openWatchArea();
@@ -3479,9 +3504,16 @@
   });
 
   watchCloseBtn.addEventListener('click', () => {
+    // Якщо вже щось запущено (або ще чекаємо відповіді) — перепитуємо, бо перегляд зупиниться в обох.
+    // Якщо ж людина ще на екрані вибору джерела — там і зупиняти нічого, питати нема сенсу
+    if ((watchSession || pendingWatchInvite) && !confirm('Завершити перегляд? Відео зупиниться для обох.')) {
+      return;
+    }
     if (pendingWatchInvite) cancelPendingInvite();
     else closeWatchSession(true);
   });
+
+  watchChangeBtn.addEventListener('click', changeVideo);
 
   watchYoutubeBtn.addEventListener('click', () => {
     const videoId = parseYoutubeVideoId(watchYoutubeInput.value);

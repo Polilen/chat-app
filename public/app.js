@@ -3419,6 +3419,7 @@
     watchYtPlayBtn.textContent = '▶';
     watchYtSeek.value = '0';
     watchYtTime.textContent = '0:00 / 0:00';
+    showWatchControls();
 
     await loadYoutubeApi();
 
@@ -3514,6 +3515,7 @@
     watchYtPlayBtn.textContent = '▶';
     watchYtSeek.value = '0';
     watchYtTime.textContent = '0:00 / 0:00';
+    showWatchControls();
   }
 
   function emitWatchState(action, time) {
@@ -3535,7 +3537,29 @@
     watchVideoFile.removeAttribute('src');
     watchVideoFile.load();
     watchYoutubeMount.innerHTML = '';
+    clearTimeout(watchControlsHideTimer);
+    watchYtControls.classList.remove('controls-hidden');
   }
+
+  // ---------- Автоприховування панелі керування при бездіяльності ----------
+
+  let watchControlsHideTimer = null;
+
+  function showWatchControls() {
+    watchYtControls.classList.remove('controls-hidden');
+    clearTimeout(watchControlsHideTimer);
+    watchControlsHideTimer = setTimeout(() => {
+      watchYtControls.classList.add('controls-hidden');
+    }, 2500);
+  }
+
+  // Рух миші/дотик будь-де над відео — показуємо панель і скидаємо таймер приховування.
+  // Рух/наведення саме на самій панелі теж скидає таймер, щоб вона не зникла посеред перетягування повзунка
+  watchPlayerWrap.addEventListener('mousemove', showWatchControls);
+  watchPlayerWrap.addEventListener('mousedown', showWatchControls);
+  watchPlayerWrap.addEventListener('touchstart', showWatchControls, { passive: true });
+  watchYtControls.addEventListener('mousemove', showWatchControls);
+  watchYtControls.addEventListener('touchmove', showWatchControls, { passive: true });
 
   function resetWatchUI() {
     stopCurrentPlayer();
@@ -3775,10 +3799,12 @@
   });
 
   watchVideoFile.addEventListener('play', () => {
+    watchYtPlayBtn.textContent = '⏸';
     if (!watchSession || watchSession.applyingRemote) return;
     emitWatchState('play', watchVideoFile.currentTime);
   });
   watchVideoFile.addEventListener('pause', () => {
+    watchYtPlayBtn.textContent = '▶';
     if (!watchSession || watchSession.applyingRemote) return;
     emitWatchState('pause', watchVideoFile.currentTime);
   });

@@ -2326,6 +2326,29 @@
     }
   });
 
+  el('cleanupFilesBtn').addEventListener('click', async () => {
+    if (!confirm('Видалити всі файли, які ніде не використовуються (старі відео зі спільного перегляду, залишки після видалених повідомлень тощо)? Це не вплине на активні аватарки й вкладення в чатах.')) {
+      return;
+    }
+    const btn = el('cleanupFilesBtn');
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Очищення…';
+    try {
+      const data = await api('/api/admin/cleanup-orphaned-files', { method: 'POST' });
+      showSettingsStatus(
+        data.deletedCount > 0
+          ? `Видалено файлів: ${data.deletedCount}, звільнено ${data.freedMB} МБ`
+          : 'Невикористаних файлів не знайдено'
+      );
+    } catch (err) {
+      showSettingsStatus(err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  });
+
   function closeSettingsModal() {
     settingsModal.classList.add('hidden');
   }
@@ -3684,7 +3707,7 @@
   el('watchInviteAcceptBtn').addEventListener('click', async () => {
     if (!incomingWatchInvite) return;
     const { chatId, source } = incomingWatchInvite;
-    state.socket.emit('watch:accept', { chatId });
+    state.socket.emit('watch:accept', { chatId, source });
     hideWatchInviteModal();
 
     // Якщо запросили дивитись в чаті, який зараз не відкритий — спершу перемикаємось саме на нього,

@@ -167,7 +167,8 @@ function cleanupCall(callId) {
   activeCalls.delete(callId);
 }
 
-// chatId -> { startedAt } — активні сеанси спільного перегляду (лише після прийняття запрошення)
+// chatId -> { startedAt, fileUrl } — активні сеанси спільного перегляду (лише після прийняття запрошення).
+// fileUrl заповнений, лише якщо джерело — власний завантажений файл (не YouTube)
 const activeWatchSessions = new Map();
 
 function formatDurationText(ms) {
@@ -176,6 +177,15 @@ function formatDurationText(ms) {
   const secs = totalSeconds % 60;
   if (mins > 0) return `${mins} хв ${secs} с`;
   return `${secs} с`;
+}
+
+// Відео, завантажене спеціально для спільного перегляду, ніде більше не використовується
+// (це не повідомлення в чаті, а лише тимчасове джерело для плеєра) — тому після завершення
+// сеансу видаляємо файл з диска, щоб він не займав місце на Volume назавжди
+function cleanupWatchFile(session) {
+  if (session && session.fileUrl) {
+    fs.unlink(path.join(UPLOAD_DIR, path.basename(session.fileUrl)), () => {});
+  }
 }
 
 // Системні повідомлення в чат про дзвінки/спільний перегляд — sender_id є формальністю
@@ -463,6 +473,56 @@ app.post('/api/upload', authMiddleware, (req, res) => {
 
     res.json({ url: `/uploads/${req.file.filename}`, type });
   });
+});
+
+app.post('/api/admin/cleanup-orphaned-files', authMiddleware, (req, res) => {
+  try {
+    // Збираємо всі шляхи файлів, на які хоч десь є посилання в базі — аватарки (поточні й в
+    // історії), аватарки груп, а також вкладення в повідомленнях
+    const referenced = new Set();
+    const addRef = (url) => { if (url) referenced.add(path.basename(url)); };
+
+    db.prepare('SELECT avatar_url FROM users WHERE avatar_url IS NOT NULL').all()
+      .forEach((r) => addRef(r.avatar_url));
+    db.prepare('SELECT avatar_url FROM avatar_history').all()
+      .forEach((r) => addRef(r.avatar_url));
+    db.prepare('SELECT avatar_url FROM chats WHERE avatar_url IS NOT NULL').all()
+      .forEach((r) => addRef(r.avatar_url));
+    db.prepare('SELECT image_url, audio_url, video_url FROM messages').all()
+      .forEach((r) => { addRef(r.image_url); addRef(r.audio_url); addRef(r.video_url); });
+
+    let files = [];
+    try {
+      files = fs.readdirSync(UPLOAD_DIR);
+    } catch (err) {
+      return res.json({ ok: true, deletedCount: 0, freedMB: 0 });
+    }
+
+    let deletedCount = 0;
+    let freedBytes = 0;
+    files.forEach((filename) => {
+      if (referenced.has(filename)) return;
+      const fullPath = path.join(UPLOAD_DIR, filename);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (!stat.isFile()) return;
+        fs.unlinkSync(fullPath);
+        deletedCount += 1;
+        freedBytes += stat.size;
+      } catch (err) {
+        // Файл могли видалити паралельно чи інша помилка доступу — пропускаємо, не зупиняємо решту
+      }
+    });
+
+    res.json({
+      ok: true,
+      deletedCount,
+      freedMB: Math.round((freedBytes / (1024 * 1024)) * 100) / 100,
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Не вдалося виконати очищення' });
+  }
 });
 
 app.get('/api/search', authMiddleware, (req, res) => {
@@ -964,11 +1024,12 @@ io.on('connection', (socket) => {
 
   socket.on('watch:accept', (payload) => {
     try {
-      const { chatId } = payload || {};
+      const { chatId, source } = payload || {};
       if (!chatId) return;
       const otherId = watchDirectPartner(chatId, socket.user.id);
       if (!otherId) return;
-      activeWatchSessions.set(chatId, { startedAt: Date.now() });
+      const fileUrl = source && source.type === 'file' ? source.url : null;
+      activeWatchSessions.set(chatId, { startedAt: Date.now(), fileUrl });
       io.to(`user:${otherId}`).emit('watch:accepted', { chatId, fromUserId: socket.user.id });
     } catch (err) {
       console.error(err);
@@ -1021,6 +1082,7 @@ io.on('connection', (socket) => {
           `Спільний перегляд тривав ${formatDurationText(Date.now() - session.startedAt)}`,
           'watch_ended'
         );
+        cleanupWatchFile(session);
         activeWatchSessions.delete(chatId);
       }
     } catch (err) {
@@ -1058,8 +1120,10 @@ io.on('connection', (socket) => {
           `Спільний перегляд тривав ${formatDurationText(Date.now() - prevSession.startedAt)}`,
           'watch_ended'
         );
+        cleanupWatchFile(prevSession);
       }
-      activeWatchSessions.set(chatId, { startedAt: Date.now() });
+      const fileUrl = source.type === 'file' ? source.url : null;
+      activeWatchSessions.set(chatId, { startedAt: Date.now(), fileUrl });
 
       io.to(`user:${otherId}`).emit('watch:switch-video', { chatId, source, fromUserId: socket.user.id });
     } catch (err) {
@@ -1115,6 +1179,7 @@ io.on('connection', (socket) => {
         const otherWatchId = otherUserId(chat, uid);
         io.to(`user:${otherWatchId}`).emit('watch:end', { chatId, fromUserId: uid });
         insertSystemMessage(chatId, uid, `Спільний перегляд тривав ${formatDurationText(Date.now() - session.startedAt)}`, 'watch_ended');
+        cleanupWatchFile(session);
         activeWatchSessions.delete(chatId);
       }
     }

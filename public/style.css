@@ -496,6 +496,16 @@ body {
   flex-shrink: 0;
 }
 
+.watch-yt-volume-icon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.watch-yt-volume {
+  width: 70px;
+  flex-shrink: 0;
+  accent-color: var(--accent);
+}
+
 @media (max-width: 720px) {
   .active-chat.watch-mode {
     flex-direction: column;

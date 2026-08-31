@@ -430,9 +430,16 @@
       hideCallUI();
     });
     state.socket.on('watch:invite', ({ chatId, source, fromUserId, fromUsername }) => {
-      if (state.activeChatId !== chatId || watchSession || incomingWatchInvite) return;
+      // Раніше запрошення показувалось лише якщо саме цей чат був відкритий — тепер,
+      // як і дзвінки, приходить незалежно від того, який чат зараз відкритий
+      if (watchSession || incomingWatchInvite || pendingWatchInvite) {
+        state.socket.emit('watch:decline', { chatId }); // зайнято — автоматично відхиляємо
+        return;
+      }
       incomingWatchInvite = { chatId, source, fromUserId, fromUsername };
-      showWatchInviteModal(fromUsername, fromUserId);
+      const chatEntry = state.chats.find((c) => c.chatId === chatId);
+      const avatarUrl = chatEntry && !chatEntry.isGroup ? chatEntry.withUser.avatarUrl : null;
+      showWatchInviteModal(fromUsername, avatarUrl);
     });
     state.socket.on('watch:accepted', ({ chatId }) => {
       if (!pendingWatchInvite || pendingWatchInvite.chatId !== chatId) return;
@@ -3249,6 +3256,7 @@
   const watchYtPlayBtn = el('watchYtPlayBtn');
   const watchYtSeek = el('watchYtSeek');
   const watchYtTime = el('watchYtTime');
+  const watchYtVolume = el('watchYtVolume');
   const watchFullscreenBtn = el('watchFullscreenBtn');
 
   let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
@@ -3342,6 +3350,8 @@
       events: {
         onReady: () => {
           watchYtSeek.max = String(ytPlayer.getDuration() || 100);
+          // Гучність — суто локальна для мене, не синхронізується із співрозмовником
+          ytPlayer.setVolume(Number(watchYtVolume.value));
         },
         onStateChange: (e) => {
           if (!watchSession || watchSession.applyingRemote) return;
@@ -3485,8 +3495,8 @@
   const watchInviteAvatar = el('watchInviteAvatar');
   const watchInviteUsername = el('watchInviteUsername');
 
-  function showWatchInviteModal(fromUsername, fromUserId) {
-    renderAvatarInto(watchInviteAvatar, fromUsername, state.activeChatWith && state.activeChatWith.id === fromUserId ? state.activeChatWith.avatarUrl : null);
+  function showWatchInviteModal(fromUsername, avatarUrl) {
+    renderAvatarInto(watchInviteAvatar, fromUsername, avatarUrl);
     watchInviteUsername.textContent = fromUsername;
     watchInviteModal.classList.remove('hidden');
   }
@@ -3496,11 +3506,19 @@
     incomingWatchInvite = null;
   }
 
-  el('watchInviteAcceptBtn').addEventListener('click', () => {
+  el('watchInviteAcceptBtn').addEventListener('click', async () => {
     if (!incomingWatchInvite) return;
     const { chatId, source } = incomingWatchInvite;
     state.socket.emit('watch:accept', { chatId });
     hideWatchInviteModal();
+
+    // Якщо запросили дивитись в чаті, який зараз не відкритий — спершу перемикаємось саме на нього,
+    // інакше режим перегляду застосувався б до чату, який відкритий зараз, а не до потрібного
+    if (state.activeChatId !== chatId) {
+      const entry = state.chats.find((c) => c.chatId === chatId);
+      if (entry) await openChat(entry);
+    }
+
     if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
     else if (source.type === 'file') beginFileSession(source.url, chatId);
   });
@@ -3526,6 +3544,16 @@
     watchSession.seekDragging = false;
     if (!watchSession.applyingRemote) emitWatchState('seek', time);
   });
+
+  // Гучність YouTube-плеєра — суто локальна для мене, не транслюється й ніяк не впливає на співрозмовника
+  watchYtVolume.value = localStorage.getItem('watchYtVolume') || '100';
+  watchYtVolume.addEventListener('input', () => {
+    localStorage.setItem('watchYtVolume', watchYtVolume.value);
+    if (watchSession && watchSession.ytPlayer) {
+      watchSession.ytPlayer.setVolume(Number(watchYtVolume.value));
+    }
+  });
+
 
   watchVideoFile.addEventListener('play', () => {
     if (!watchSession || watchSession.applyingRemote) return;

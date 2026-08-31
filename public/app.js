@@ -3345,6 +3345,7 @@
       pollTimer: null,
       seekDragging: false,
       lastYtPlayerState: null,
+      priming: false,
     };
 
     watchYoutubeMount.innerHTML = '<div id="watchYoutubeMountInner"></div>';
@@ -3353,13 +3354,37 @@
       playerVars: { controls: 0, disablekb: 1, modestbranding: 1, rel: 0, playsinline: 1 },
       events: {
         onReady: () => {
+          if (!watchSession) return; // сесію вже могли закрити, поки плеєр вантажився
           watchYtSeek.max = String(ytPlayer.getDuration() || 100);
           // Гучність — суто локальна для мене, не синхронізується із співрозмовником
           ytPlayer.setVolume(Number(watchYtVolume.value));
+
+          // "Прогріваємо" плеєр одразу після завантаження: коротко й беззвучно програємо кадр,
+          // щоб YouTube почав завантажувати буфер заздалегідь, а не лише в момент першого
+          // реального натискання плей. Саме брак цього буфера й спричиняв затримку в ~2с у
+          // того, хто щойно приєднався — його плеєр був геть "холодний" на старті
+          watchSession.priming = true;
+          try {
+            ytPlayer.mute();
+            ytPlayer.playVideo();
+          } catch (e) { /* ignore */ }
+          setTimeout(() => {
+            try {
+              ytPlayer.pauseVideo();
+              ytPlayer.seekTo(0, true);
+              ytPlayer.unMute();
+              ytPlayer.setVolume(Number(watchYtVolume.value));
+            } catch (e) { /* ignore */ }
+            if (watchSession) watchSession.priming = false;
+          }, 600);
         },
         onStateChange: (e) => {
           if (!watchSession) return;
           watchSession.lastYtPlayerState = e.data;
+
+          // Під час "прогріву" (беззвучний плей+пауза одразу після завантаження) не міняємо
+          // кнопку й нічого не транслюємо — це суто технічна дія, не справжня команда людини
+          if (watchSession.priming) return;
 
           if (e.data === YT.PlayerState.PLAYING) watchYtPlayBtn.textContent = '⏸';
           else if (e.data === YT.PlayerState.PAUSED) watchYtPlayBtn.textContent = '▶';
@@ -3397,7 +3422,9 @@
     watchYtControls.classList.remove('hidden'); // та сама панель керування, що й для YouTube — тепер працює для обох
 
     watchSession = { chatId, type: 'file', applyingRemote: false };
+    watchVideoFile.preload = 'auto'; // просимо браузер почати буферизацію одразу, ще до першого натискання плей
     watchVideoFile.src = url;
+    watchVideoFile.load();
     watchVideoFile.volume = Number(watchYtVolume.value) / 100;
     watchYtPlayBtn.textContent = '▶';
     watchYtSeek.value = '0';
@@ -3546,7 +3573,7 @@
   });
 
   watchYtPlayBtn.addEventListener('click', () => {
-    if (!watchSession) return;
+    if (!watchSession || watchSession.priming) return; // прогрів триває долі секунди — просто ігноруємо клік у цей момент
     if (watchSession.type === 'youtube') {
       if (!watchSession.ytPlayer) return;
       const ytState = watchSession.ytPlayer.getPlayerState();

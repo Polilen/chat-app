@@ -1322,6 +1322,40 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Хтось з учасників групи почав обирати заміну відео — повідомляємо решту ПОТОЧНИХ глядачів
+  // (не всю групу), щоб вони НЕ виходили з режиму перегляду, а просто зачекали, як і в особистому чаті
+  socket.on('group-watch:switching', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      const session = groupWatchSessions.get(chatId);
+      if (!session || !session.participants.has(socket.user.id)) return;
+      session.participants.forEach((uid) => {
+        if (uid === socket.user.id) return;
+        io.to(`user:${uid}`).emit('group-watch:switching', {
+          chatId, fromUserId: socket.user.id, fromUsername: socket.user.username,
+        });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  // Той, хто обирав, передумав і скасував — сесія на сервері не змінювалась весь цей час,
+  // тож тим, хто чекав, достатньо просто "перезайти" в той самий (незмінний) перегляд
+  socket.on('group-watch:switch-cancel', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      const session = groupWatchSessions.get(chatId);
+      if (!session || !session.participants.has(socket.user.id)) return;
+      session.participants.forEach((uid) => {
+        if (uid === socket.user.id) return;
+        io.to(`user:${uid}`).emit('group-watch:switch-cancel', { chatId });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
   socket.on('group-watch:switch-video', (payload) => {
     try {
       const { chatId, source } = payload || {};

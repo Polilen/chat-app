@@ -487,6 +487,7 @@
       watchSession = null;
       isPartnerChoosing = true;
       partnerChoosingChatId = chatId;
+      partnerChoosingIsGroup = false;
       showChoosingState();
     });
     state.socket.on('watch:switch-video', ({ chatId, source }) => {
@@ -503,6 +504,15 @@
       showGroupWatchBanner(chatId, participantCount);
     });
     state.socket.on('group-watch:participant-update', ({ chatId, participantCount }) => {
+      if (isPartnerChoosing && partnerChoosingChatId === chatId) {
+        // Стан учасників поточної сесії змінився, поки я чекав вибору когось іншого —
+        // на випадок якщо це був саме той, хто обирав (і раптово від'єднався), просто
+        // повертаємось до перегляду наново, а не лишаємось чекати марно
+        isPartnerChoosing = false;
+        partnerChoosingChatId = null;
+        joinGroupWatch(chatId);
+        return;
+      }
       if (watchSession && watchSession.isGroup && watchSession.chatId === chatId) {
         // Я сам зараз дивлюсь — оновлюємо кількість у заголовку
         updateGroupWatchParticipantCount(participantCount);
@@ -517,12 +527,41 @@
         resetWatchUI();
         watchSession = null;
       }
+      if (isPartnerChoosing && partnerChoosingChatId === chatId) {
+        isPartnerChoosing = false;
+        partnerChoosingChatId = null;
+        resetWatchUI();
+      }
     });
     state.socket.on('group-watch:state', ({ chatId, action, time, ts }) => {
       if (!watchSession || !watchSession.isGroup || watchSession.chatId !== chatId) return;
       applyRemoteWatchState(action, time, ts);
     });
+    state.socket.on('group-watch:switching', ({ chatId, fromUsername }) => {
+      if (!watchSession || !watchSession.isGroup || watchSession.chatId !== chatId) return;
+      // НЕ виходимо з режиму перегляду — просто зупиняємо поточне відео й чекаємо нового вибору
+      stopCurrentPlayer();
+      watchSession = null;
+      isPartnerChoosing = true;
+      partnerChoosingChatId = chatId;
+      partnerChoosingIsGroup = true;
+      showChoosingState(fromUsername);
+    });
+    state.socket.on('group-watch:switch-cancel', ({ chatId }) => {
+      if (!isPartnerChoosing || partnerChoosingChatId !== chatId) return;
+      isPartnerChoosing = false;
+      partnerChoosingChatId = null;
+      // Сесія на сервері весь цей час лишалась незмінною — просто "перезаходимо" в той самий перегляд
+      joinGroupWatch(chatId);
+    });
     state.socket.on('group-watch:switch-video', ({ chatId, source }) => {
+      if (isPartnerChoosing && partnerChoosingChatId === chatId) {
+        isPartnerChoosing = false;
+        partnerChoosingChatId = null;
+        if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, { isGroup: true });
+        else if (source.type === 'file') beginFileSession(source.url, chatId, { isGroup: true });
+        return;
+      }
       if (!watchSession || !watchSession.isGroup || watchSession.chatId !== chatId) return;
       if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, { isGroup: true });
       else if (source.type === 'file') beginFileSession(source.url, chatId, { isGroup: true });
@@ -1025,9 +1064,11 @@
       switchingIsGroup = false;
     }
     if (isPartnerChoosing && partnerChoosingChatId !== entry.chatId) {
-      state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
+      if (partnerChoosingIsGroup) state.socket.emit('group-watch:leave', { chatId: partnerChoosingChatId });
+      else state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
       isPartnerChoosing = false;
       partnerChoosingChatId = null;
+      partnerChoosingIsGroup = false;
     }
     if (groupWatchBannerChatId && groupWatchBannerChatId !== entry.chatId) {
       hideGroupWatchBanner();
@@ -1720,6 +1761,12 @@
       // Групу видалили/мене з неї прибрали, поки я саме дивився в ній відео — просто прибираємо
       // локальний стан перегляду без нового emit: сервер уже сам вивів мене з учасників
       watchSession = null;
+      resetWatchUI();
+    }
+    if (isPartnerChoosing && partnerChoosingChatId === chatId) {
+      isPartnerChoosing = false;
+      partnerChoosingChatId = null;
+      partnerChoosingIsGroup = false;
       resetWatchUI();
     }
     if (groupWatchBannerChatId === chatId) hideGroupWatchBanner();
@@ -3386,6 +3433,7 @@
   let switchingIsGroup = false;
   let isPartnerChoosing = false; // співрозмовник зараз обирає нове відео — я лише чекаю, не виходячи з режиму
   let partnerChoosingChatId = null;
+  let partnerChoosingIsGroup = false;
   let groupWatchBannerChatId = null; // групу, для якої зараз показаний банер "N дивляться разом"
   let youtubeApiPromise = null;
 
@@ -3450,12 +3498,13 @@
 
   // Співрозмовник зараз обирає нове відео (після його кліку на 🔄) — ми лишаємось у режимі
   // перегляду, просто чекаємо, нічого не закриваючи й нікуди не виходячи
-  function showChoosingState() {
+  function showChoosingState(username) {
     watchSourcePicker.classList.add('hidden');
     watchWaitingState.classList.add('hidden');
     watchChoosingState.classList.remove('hidden');
     watchPlayerWrap.classList.add('hidden');
     watchChangeBtn.classList.add('hidden');
+    el('watchChoosingText').textContent = username ? `${username} обирає нове відео…` : 'Співрозмовник обирає нове відео…';
   }
 
   function showPlayer() {
@@ -3763,11 +3812,12 @@
   // повного закриття одразу показує вибір нового джерела, не виходячи з режиму перегляду
   function changeVideo() {
     if (watchSession && watchSession.isGroup) {
-      // У групі простіше: одразу переходимо до вибору нового джерела й транслюємо зміну
-      // поточним учасникам напряму, без "очікування" — приєднатись раніше вже і так було
-      // добровільним рішенням кожного
+      if (!confirm('Поставити інше відео? Поточний перегляд зупиниться для тих, хто зараз дивиться.')) return;
+      // Повідомляємо решту поточних глядачів (не всю групу) — вони НЕ виходять з режиму
+      // перегляду, а лише бачать "N обирає нове відео…", так само як в особистому чаті
       switchingChatId = watchSession.chatId;
       switchingIsGroup = true;
+      state.socket.emit('group-watch:switching', { chatId: switchingChatId });
       resetWatchUI();
       watchSession = null;
       isSwitchingVideo = true;
@@ -3818,20 +3868,22 @@
     if (pendingWatchInvite) {
       cancelPendingInvite();
     } else if (isSwitchingVideo) {
-      // Розпочали обирати заміну (співрозмовник уже чекає з повідомленням "обирає відео…"),
-      // але передумали — обов'язково повідомляємо watch:end, інакше він так і лишиться чекати.
-      // У груповому режимі це не потрібно — там ніхто нікого не чекає
-      if (!switchingIsGroup) state.socket.emit('watch:end', { chatId: switchingChatId });
+      // Розпочали обирати заміну (глядачі вже чекають з повідомленням "обирає відео…"),
+      // але передумали — обов'язково повідомляємо про скасування, інакше вони так і лишаться чекати
+      if (switchingIsGroup) state.socket.emit('group-watch:switch-cancel', { chatId: switchingChatId });
+      else state.socket.emit('watch:end', { chatId: switchingChatId });
       isSwitchingVideo = false;
       switchingChatId = null;
       switchingIsGroup = false;
       resetWatchUI();
     } else if (isPartnerChoosing) {
-      // Ми пасивно чекаємо, поки співрозмовник обирає заміну, але самі вирішили вийти —
-      // повідомляємо його теж, інакше він лишиться чекати марно
-      state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
+      // Ми пасивно чекаємо, поки хтось обирає заміну, але самі вирішили вийти —
+      // повідомляємо про це теж, інакше інша сторона лишиться чекати марно
+      if (partnerChoosingIsGroup) state.socket.emit('group-watch:leave', { chatId: partnerChoosingChatId });
+      else state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
       isPartnerChoosing = false;
       partnerChoosingChatId = null;
+      partnerChoosingIsGroup = false;
       resetWatchUI();
     } else {
       closeWatchSession(true);

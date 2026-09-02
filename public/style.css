@@ -448,6 +448,16 @@ body {
   min-height: 0;
 }
 
+/* Прозорий шар поверх відео/iframe: рух миші чи дотик прямо над YouTube-плеєром не долітає
+   до батьківської сторінки (iframe — чужий документ), тому без цього шару автоприховування
+   не реагувало б на курсор саме над відео, лише над смужкою керування внизу */
+.watch-interaction-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: pointer;
+}
+
 .watch-youtube-mount {
   width: 100%;
   height: 100%;
@@ -466,6 +476,7 @@ body {
   left: 0;
   right: 0;
   bottom: 0;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -509,6 +520,9 @@ body {
 .watch-yt-volume-icon {
   font-size: 13px;
   flex-shrink: 0;
+  cursor: pointer;
+  width: 20px;
+  text-align: center;
 }
 .watch-yt-volume {
   flex: 0 0 10%;
@@ -516,6 +530,22 @@ body {
   max-width: 90px;
   accent-color: var(--accent);
 }
+
+.watch-yt-fullscreen-btn {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: none;
+  background: rgba(255,255,255,0.12);
+  color: #fff;
+  font-size: 14px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.watch-yt-fullscreen-btn:hover { background: rgba(255,255,255,0.22); }
 
 @media (max-width: 720px) {
   .active-chat.watch-mode {

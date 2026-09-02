@@ -3318,6 +3318,7 @@
   const watchYoutubeMount = el('watchYoutubeMount');
   const watchVideoFile = el('watchVideoFile');
   const watchYtControls = el('watchYtControls');
+  const watchInteractionOverlay = el('watchInteractionOverlay');
   const watchYtPlayBtn = el('watchYtPlayBtn');
   const watchYtSeek = el('watchYtSeek');
   const watchYtTime = el('watchYtTime');
@@ -3555,11 +3556,19 @@
 
   // Рух миші/дотик будь-де над відео — показуємо панель і скидаємо таймер приховування.
   // Рух/наведення саме на самій панелі теж скидає таймер, щоб вона не зникла посеред перетягування повзунка
-  watchPlayerWrap.addEventListener('mousemove', showWatchControls);
-  watchPlayerWrap.addEventListener('mousedown', showWatchControls);
-  watchPlayerWrap.addEventListener('touchstart', showWatchControls, { passive: true });
+  // Слухаємо саме на watchInteractionOverlay (не watchPlayerWrap) — рух миші/дотик прямо над
+  // YouTube-плеєром інакше не долетів би через чужий iframe до батьківської сторінки
+  watchInteractionOverlay.addEventListener('mousemove', showWatchControls);
+  watchInteractionOverlay.addEventListener('mousedown', showWatchControls);
+  watchInteractionOverlay.addEventListener('touchstart', showWatchControls, { passive: true });
   watchYtControls.addEventListener('mousemove', showWatchControls);
   watchYtControls.addEventListener('touchmove', showWatchControls, { passive: true });
+
+  // Клік по самому відео теж перемикає плей/пауза — звичний жест для будь-якого відеоплеєра
+  watchInteractionOverlay.addEventListener('click', () => {
+    showWatchControls();
+    watchYtPlayBtn.click();
+  });
 
   function resetWatchUI() {
     stopCurrentPlayer();
@@ -3778,15 +3787,39 @@
   });
 
   // Гучність — суто локальна для мене, у кожного учасника своя, ніколи не транслюється й не синхронізується
-  watchYtVolume.value = localStorage.getItem('watchYtVolume') || '100';
-  watchYtVolume.addEventListener('input', () => {
-    localStorage.setItem('watchYtVolume', watchYtVolume.value);
+  const watchYtVolumeIcon = el('watchYtVolumeIcon');
+  let watchVolumeBeforeMute = 100;
+
+  function applyWatchVolume(value) {
+    const numeric = Number(value);
+    localStorage.setItem('watchYtVolume', String(numeric));
+    watchYtVolumeIcon.textContent = numeric === 0 ? '🔇' : numeric < 50 ? '🔉' : '🔊';
     if (!watchSession) return;
     if (watchSession.type === 'youtube' && watchSession.ytPlayer) {
-      watchSession.ytPlayer.setVolume(Number(watchYtVolume.value));
+      watchSession.ytPlayer.setVolume(numeric);
     } else if (watchSession.type === 'file') {
-      watchVideoFile.volume = Number(watchYtVolume.value) / 100;
+      watchVideoFile.volume = numeric / 100;
     }
+  }
+
+  watchYtVolume.value = localStorage.getItem('watchYtVolume') || '100';
+  applyWatchVolume(watchYtVolume.value); // виставляємо стартову іконку без застосування до сесії (її ще нема)
+
+  watchYtVolume.addEventListener('input', () => {
+    if (Number(watchYtVolume.value) > 0) watchVolumeBeforeMute = Number(watchYtVolume.value);
+    applyWatchVolume(watchYtVolume.value);
+  });
+
+  watchYtVolumeIcon.addEventListener('click', () => {
+    if (Number(watchYtVolume.value) > 0) {
+      // Вимикаємо — запам'ятовуємо, на якому рівні був звук, щоб повернути саме його
+      watchVolumeBeforeMute = Number(watchYtVolume.value);
+      watchYtVolume.value = '0';
+    } else {
+      // Вмикаємо назад на той рівень, що був до вимкнення (а не завжди на 100%)
+      watchYtVolume.value = String(watchVolumeBeforeMute || 100);
+    }
+    applyWatchVolume(watchYtVolume.value);
   });
 
   watchVideoFile.addEventListener('loadedmetadata', () => {
@@ -3836,8 +3869,15 @@
       }
     } else if (watchSession.type === 'file') {
       watchVideoFile.currentTime = time;
-      if (action === 'play') watchVideoFile.play().catch(() => {});
-      else if (action === 'pause') watchVideoFile.pause();
+      if (action === 'play') {
+        watchVideoFile.play().catch(() => {});
+        // Оновлюємо іконку одразу, не чекаючи на подію 'play' — деякі браузери можуть заблокувати
+        // автовідтворення відео, ініційованого не прямим кліком людини (сама подія тоді не спрацює)
+        watchYtPlayBtn.textContent = '⏸';
+      } else if (action === 'pause') {
+        watchVideoFile.pause();
+        watchYtPlayBtn.textContent = '▶';
+      }
     }
 
     // Достатньо довге вікно, щоб пережити типову буферизацію після перемотки на повільнішій мережі,

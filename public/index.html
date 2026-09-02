@@ -93,13 +93,14 @@
           <div id="watchPlayerWrap" class="watch-player-wrap hidden">
             <div id="watchYoutubeMount" class="watch-youtube-mount hidden"></div>
             <video id="watchVideoFile" class="watch-video-file hidden" playsinline></video>
-            <button type="button" id="watchFullscreenBtn" class="call-video-fullscreen-btn" title="На весь екран">⛶</button>
+            <div id="watchInteractionOverlay" class="watch-interaction-overlay"></div>
             <div id="watchYtControls" class="watch-yt-controls hidden">
               <button type="button" id="watchYtPlayBtn" class="watch-yt-play-btn">▶</button>
               <input type="range" id="watchYtSeek" min="0" max="100" value="0" step="0.1">
               <span id="watchYtTime" class="watch-yt-time">0:00 / 0:00</span>
-              <span class="watch-yt-volume-icon">🔊</span>
+              <span id="watchYtVolumeIcon" class="watch-yt-volume-icon" title="Вимкнути/увімкнути звук">🔊</span>
               <input type="range" id="watchYtVolume" class="watch-yt-volume" min="0" max="100" value="100" title="Гучність лише для вас — у кожного своя, не синхронізується">
+              <button type="button" id="watchFullscreenBtn" class="watch-yt-fullscreen-btn" title="На весь екран">⛶</button>
             </div>
           </div>
         </div>

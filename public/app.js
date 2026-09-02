@@ -3814,11 +3814,13 @@
     if (watchSession && watchSession.isGroup) {
       if (!confirm('Поставити інше відео? Поточний перегляд зупиниться для тих, хто зараз дивиться.')) return;
       // Повідомляємо решту поточних глядачів (не всю групу) — вони НЕ виходять з режиму
-      // перегляду, а лише бачать "N обирає нове відео…", так само як в особистому чаті
+      // перегляду, а лише бачать "N обирає нове відео…", так само як в особистому чаті.
+      // Важливо: тут викликаємо лише stopCurrentPlayer(), а НЕ resetWatchUI() — інакше й сам
+      // ініціатор заміни теж вилітав би із режиму перегляду назад у звичайний чат
       switchingChatId = watchSession.chatId;
       switchingIsGroup = true;
       state.socket.emit('group-watch:switching', { chatId: switchingChatId });
-      resetWatchUI();
+      stopCurrentPlayer();
       watchSession = null;
       isSwitchingVideo = true;
       showSourcePicker();

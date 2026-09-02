@@ -392,6 +392,7 @@ body {
   flex-shrink: 0;
 }
 .watch-video-title { font-weight: 700; font-size: 14px; color: #fff; }
+.watch-group-count { font-weight: 400; color: rgba(255,255,255,0.6); margin-left: 6px; }
 .watch-video-header-actions { display: flex; align-items: center; gap: 6px; }
 .watch-video-header .icon-btn { color: #fff; }
 
@@ -1198,6 +1199,18 @@ body {
   font-size: 13px;
   flex-shrink: 0;
 }
+
+.group-watch-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+  font-size: 13px;
+  flex-shrink: 0;
+}
+.group-watch-banner span { font-weight: 600; }
 
 .selection-actions {
   display: flex;

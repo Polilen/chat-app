@@ -64,7 +64,9 @@
       <div id="activeChat" class="active-chat hidden">
         <div id="watchVideoArea" class="watch-video-area hidden">
           <div class="watch-video-header">
-            <span class="watch-video-title">Дивимось разом</span>
+            <span class="watch-video-title">
+              Дивимось разом<span id="watchGroupParticipantCount" class="watch-group-count hidden"></span>
+            </span>
             <div class="watch-video-header-actions">
               <button type="button" id="watchChangeBtn" class="icon-btn hidden" title="Поставити інше відео">🔄</button>
               <button type="button" id="watchCloseBtn" class="icon-btn" title="Завершити перегляд">✕</button>
@@ -127,6 +129,10 @@
             <button id="selectModeBtn" class="icon-btn select-mode-btn" title="Виділити повідомлення">☑</button>
           </div>
         </header>
+        <div id="groupWatchBanner" class="group-watch-banner hidden">
+          <span id="groupWatchBannerText">🎬 Дивляться відео разом</span>
+          <button type="button" id="groupWatchJoinBtn" class="modal-action-btn small">Приєднатися</button>
+        </div>
         <div id="messages" class="messages"></div>
         <div id="selectionBar" class="selection-bar hidden">
           <span id="selectionCount">0 обрано</span>

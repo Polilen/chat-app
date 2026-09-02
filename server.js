@@ -188,6 +188,18 @@ function cleanupWatchFile(session) {
   }
 }
 
+// chatId -> { source, fileUrl, startedAt, participants: Set<userId>, lastState: {action,time,ts} }
+// Групова "кімната" перегляду — на відміну від особистого чату тут немає жорсткого
+// запрошення/прийняття: будь-хто з учасників групи може почати, і будь-хто інший може
+// самостійно приєднатись чи вийти в будь-який момент, не зупиняючи перегляд для решти
+const groupWatchSessions = new Map();
+
+function groupWatchBanner(chatId) {
+  const session = groupWatchSessions.get(chatId);
+  if (!session) return null;
+  return { chatId, participantIds: Array.from(session.participants) };
+}
+
 // Системні повідомлення в чат про дзвінки/спільний перегляд — sender_id є формальністю
 // (для NOT NULL-обмеження), клієнт рендерить їх окремо від звичайних бульбашок за event_type
 function insertSystemMessage(chatId, senderId, text, eventType) {
@@ -577,6 +589,7 @@ function serializeGroup(chatId, viewerId) {
     m.presence = getPresenceForViewer(m.id, chatId, viewerId);
     m.isOwner = m.id === chat.creator_id;
   });
+  const watchSession = groupWatchSessions.get(chatId);
   return {
     id: chat.id,
     isGroup: true,
@@ -585,6 +598,8 @@ function serializeGroup(chatId, viewerId) {
     creatorId: chat.creator_id,
     memberCount: members.length,
     members,
+    watchActive: !!watchSession,
+    watchParticipantCount: watchSession ? watchSession.participants.size : 0,
   };
 }
 
@@ -1131,6 +1146,211 @@ io.on('connection', (socket) => {
     }
   });
 
+  // ---------- Спільний перегляд у ГРУПАХ ----------
+  // На відміну від особистого чату: без обов'язкового прийняття — будь-хто починає, будь-хто
+  // інший самостійно приєднується чи виходить, перегляд триває, доки лишається хоч один учасник
+
+  function groupChat(chatId) {
+    const chat = db.prepare('SELECT * FROM chats WHERE id = ?').get(chatId);
+    if (!chat || !chat.is_group) return null;
+    return chat;
+  }
+
+  function endGroupWatchSession(chatId, endedByUserId, announce) {
+    const session = groupWatchSessions.get(chatId);
+    if (!session) return;
+    insertSystemMessage(
+      chatId,
+      endedByUserId,
+      `Спільний перегляд у групі тривав ${formatDurationText(Date.now() - session.startedAt)}`,
+      'watch_ended'
+    );
+    cleanupWatchFile(session);
+    groupWatchSessions.delete(chatId);
+    if (announce) {
+      const chat = groupChat(chatId);
+      if (chat) {
+        getParticipantIds(chat, null).forEach((uid) => {
+          io.to(`user:${uid}`).emit('group-watch:session-ended', { chatId });
+        });
+      }
+    }
+  }
+
+  // Викликається, коли людина покинула саму групу (чи її звідти прибрали) — якщо вона
+  // якраз була учасником групового перегляду, прибираємо її і звідти теж
+  function leaveGroupWatchIfAny(chatId, userId) {
+    const session = groupWatchSessions.get(chatId);
+    if (!session || !session.participants.has(userId)) return;
+    session.participants.delete(userId);
+    if (session.participants.size === 0) {
+      endGroupWatchSession(chatId, userId, true);
+    } else {
+      const chat = groupChat(chatId);
+      if (chat) {
+        getParticipantIds(chat, null).forEach((uid) => {
+          io.to(`user:${uid}`).emit('group-watch:participant-update', {
+            chatId,
+            participantCount: session.participants.size,
+            leftUserId: userId,
+          });
+        });
+      }
+    }
+  }
+
+  socket.on('group-watch:start', (payload, ack) => {
+    try {
+      const { chatId, source } = payload || {};
+      if (!chatId || !source) {
+        if (ack) ack({ error: 'Некоректні дані' });
+        return;
+      }
+      const chat = groupChat(chatId);
+      if (!chat || !isParticipant(chat, socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+      if (groupWatchSessions.has(chatId)) {
+        if (ack) ack({ error: 'Перегляд у цій групі вже триває' });
+        return;
+      }
+
+      const now = Date.now();
+      groupWatchSessions.set(chatId, {
+        source,
+        fileUrl: source.type === 'file' ? source.url : null,
+        startedAt: now,
+        participants: new Set([socket.user.id]),
+        lastState: { action: 'pause', time: 0, ts: now },
+      });
+
+      getParticipantIds(chat, socket.user.id).forEach((uid) => {
+        io.to(`user:${uid}`).emit('group-watch:announced', {
+          chatId,
+          fromUserId: socket.user.id,
+          fromUsername: socket.user.username,
+          participantCount: 1,
+        });
+      });
+
+      if (ack) ack({ ok: true });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('group-watch:join', (payload, ack) => {
+    try {
+      const { chatId } = payload || {};
+      const chat = groupChat(chatId);
+      if (!chat || !isParticipant(chat, socket.user.id)) {
+        if (ack) ack({ error: 'Немає доступу до цього чату' });
+        return;
+      }
+      const session = groupWatchSessions.get(chatId);
+      if (!session) {
+        if (ack) ack({ error: 'Перегляд уже завершено' });
+        return;
+      }
+
+      session.participants.add(socket.user.id);
+
+      if (ack) {
+        ack({
+          ok: true,
+          source: session.source,
+          lastState: session.lastState,
+          participantCount: session.participants.size,
+        });
+      }
+
+      getParticipantIds(chat, socket.user.id).forEach((uid) => {
+        io.to(`user:${uid}`).emit('group-watch:participant-update', {
+          chatId,
+          participantCount: session.participants.size,
+          joinedUserId: socket.user.id,
+          joinedUsername: socket.user.username,
+        });
+      });
+    } catch (err) {
+      console.error(err);
+      if (ack) ack({ error: 'Помилка сервера' });
+    }
+  });
+
+  socket.on('group-watch:leave', (payload) => {
+    try {
+      const { chatId } = payload || {};
+      const session = groupWatchSessions.get(chatId);
+      if (!session || !session.participants.has(socket.user.id)) return;
+      session.participants.delete(socket.user.id);
+      const chat = groupChat(chatId);
+
+      if (session.participants.size === 0) {
+        endGroupWatchSession(chatId, socket.user.id, true);
+      } else if (chat) {
+        getParticipantIds(chat, null).forEach((uid) => {
+          io.to(`user:${uid}`).emit('group-watch:participant-update', {
+            chatId,
+            participantCount: session.participants.size,
+            leftUserId: socket.user.id,
+          });
+        });
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('group-watch:state', (payload) => {
+    try {
+      const { chatId, action, time } = payload || {};
+      if (!chatId || !action) return;
+      const session = groupWatchSessions.get(chatId);
+      if (!session || !session.participants.has(socket.user.id)) return;
+      session.lastState = { action, time, ts: Date.now() };
+      session.participants.forEach((uid) => {
+        if (uid === socket.user.id) return;
+        io.to(`user:${uid}`).emit('group-watch:state', {
+          chatId, action, time, ts: session.lastState.ts, fromUserId: socket.user.id,
+        });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
+  socket.on('group-watch:switch-video', (payload) => {
+    try {
+      const { chatId, source } = payload || {};
+      if (!chatId || !source) return;
+      const session = groupWatchSessions.get(chatId);
+      if (!session || !session.participants.has(socket.user.id)) return;
+
+      insertSystemMessage(
+        chatId,
+        socket.user.id,
+        `Спільний перегляд у групі тривав ${formatDurationText(Date.now() - session.startedAt)}`,
+        'watch_ended'
+      );
+      cleanupWatchFile(session);
+
+      session.source = source;
+      session.fileUrl = source.type === 'file' ? source.url : null;
+      session.startedAt = Date.now();
+      session.lastState = { action: 'pause', time: 0, ts: Date.now() };
+
+      session.participants.forEach((uid) => {
+        if (uid === socket.user.id) return;
+        io.to(`user:${uid}`).emit('group-watch:switch-video', { chatId, source, fromUserId: socket.user.id });
+      });
+    } catch (err) {
+      console.error(err);
+    }
+  });
+
 
   socket.on('chat:active', (payload) => {
     const uid = socket.user.id;
@@ -1181,6 +1401,26 @@ io.on('connection', (socket) => {
         insertSystemMessage(chatId, uid, `Спільний перегляд тривав ${formatDurationText(Date.now() - session.startedAt)}`, 'watch_ended');
         cleanupWatchFile(session);
         activeWatchSessions.delete(chatId);
+      }
+    }
+
+    // Так само виходимо з будь-якої групової "кімнати" перегляду, у якій цей сокет був учасником
+    for (const [chatId, session] of groupWatchSessions.entries()) {
+      if (!session.participants.has(uid)) continue;
+      session.participants.delete(uid);
+      if (session.participants.size === 0) {
+        endGroupWatchSession(chatId, uid, true);
+      } else {
+        const chat = groupChat(chatId);
+        if (chat) {
+          getParticipantIds(chat, null).forEach((otherId) => {
+            io.to(`user:${otherId}`).emit('group-watch:participant-update', {
+              chatId,
+              participantCount: session.participants.size,
+              leftUserId: uid,
+            });
+          });
+        }
       }
     }
 
@@ -1508,6 +1748,7 @@ io.on('connection', (socket) => {
       }
 
       db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chatId, socket.user.id);
+      leaveGroupWatchIfAny(chatId, socket.user.id);
       const remaining = db.prepare('SELECT user_id, role FROM chat_members WHERE chat_id = ? ORDER BY joined_at ASC').all(chatId);
 
       if (!remaining.length) {
@@ -1566,6 +1807,7 @@ io.on('connection', (socket) => {
       }
 
       db.prepare('DELETE FROM chat_members WHERE chat_id = ? AND user_id = ?').run(chatId, userId);
+      leaveGroupWatchIfAny(chatId, userId);
 
       // Видаленого повідомляємо окремо — для нього це виглядає як "чат видалено зі списку"
       io.to(`user:${userId}`).emit('chat:deleted', { chatId, scope: 'kicked' });

@@ -496,6 +496,38 @@
       if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
       else if (source.type === 'file') beginFileSession(source.url, chatId);
     });
+
+    // ---------- Груповий спільний перегляд ----------
+
+    state.socket.on('group-watch:announced', ({ chatId, participantCount }) => {
+      showGroupWatchBanner(chatId, participantCount);
+    });
+    state.socket.on('group-watch:participant-update', ({ chatId, participantCount }) => {
+      if (watchSession && watchSession.isGroup && watchSession.chatId === chatId) {
+        // Я сам зараз дивлюсь — оновлюємо кількість у заголовку
+        updateGroupWatchParticipantCount(participantCount);
+        return;
+      }
+      showGroupWatchBanner(chatId, participantCount);
+    });
+    state.socket.on('group-watch:session-ended', ({ chatId }) => {
+      if (groupWatchBannerChatId === chatId) hideGroupWatchBanner();
+      if (watchSession && watchSession.isGroup && watchSession.chatId === chatId) {
+        // Малоймовірно (я мав би вже вийти сам, якщо був останнім) — але про всяк випадок
+        resetWatchUI();
+        watchSession = null;
+      }
+    });
+    state.socket.on('group-watch:state', ({ chatId, action, time, ts }) => {
+      if (!watchSession || !watchSession.isGroup || watchSession.chatId !== chatId) return;
+      applyRemoteWatchState(action, time, ts);
+    });
+    state.socket.on('group-watch:switch-video', ({ chatId, source }) => {
+      if (!watchSession || !watchSession.isGroup || watchSession.chatId !== chatId) return;
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, { isGroup: true });
+      else if (source.type === 'file') beginFileSession(source.url, chatId, { isGroup: true });
+    });
+
     state.socket.on('reaction:updated', ({ chatId, messageId, reactions }) => {
       if (state.activeChatId !== chatId) return;
       const node = messagesEl.querySelector(`[data-id="${messageId}"]`);
@@ -976,7 +1008,8 @@
     cancelEditMessage();
     stopTypingSignal();
     if (watchSession && watchSession.chatId !== entry.chatId) {
-      closeWatchSession(true);
+      if (watchSession.isGroup) leaveGroupWatch();
+      else closeWatchSession(true);
     }
     if (pendingWatchInvite && pendingWatchInvite.chatId !== entry.chatId) {
       cancelPendingInvite();
@@ -986,14 +1019,18 @@
       hideWatchInviteModal();
     }
     if (isSwitchingVideo && switchingChatId !== entry.chatId) {
-      state.socket.emit('watch:end', { chatId: switchingChatId });
+      if (!switchingIsGroup) state.socket.emit('watch:end', { chatId: switchingChatId });
       isSwitchingVideo = false;
       switchingChatId = null;
+      switchingIsGroup = false;
     }
     if (isPartnerChoosing && partnerChoosingChatId !== entry.chatId) {
       state.socket.emit('watch:end', { chatId: partnerChoosingChatId });
       isPartnerChoosing = false;
       partnerChoosingChatId = null;
+    }
+    if (groupWatchBannerChatId && groupWatchBannerChatId !== entry.chatId) {
+      hideGroupWatchBanner();
     }
     const chatId = entry.chatId;
     state.activeChatId = chatId;
@@ -1006,6 +1043,12 @@
         avatarUrl: entry.groupAvatarUrl,
         memberCount: entry.memberCount,
       };
+      // Якщо в цій групі вже триває перегляд — покажемо банер "N дивляться разом", не чекаючи
+      // на живу подію (актуально після перезавантаження сторінки чи переходу в іншу групу)
+      api(`/api/groups/${chatId}`).then((data) => {
+        if (state.activeChatId !== chatId) return; // могли вже переключитись деінде, поки чекали відповідь
+        if (data.group.watchActive) showGroupWatchBanner(chatId, data.group.watchParticipantCount);
+      }).catch(() => {});
     } else {
       state.activeChatWith = entry.withUser;
       state.activeGroup = null;
@@ -1078,7 +1121,7 @@
       el('chatWithUsername').textContent = state.activeGroup.name;
       renderAvatarInto(el('chatHeaderAvatar'), state.activeGroup.name, state.activeGroup.avatarUrl);
       el('callBtn').classList.add('hidden');
-      el('watchTogetherBtn').classList.add('hidden');
+      el('watchTogetherBtn').classList.remove('hidden');
     } else if (state.activeChatWith) {
       infoEl.classList.add('clickable');
       infoEl.onclick = () => openUserProfileModal(state.activeChatWith.id);
@@ -1673,6 +1716,13 @@
   function applyChatRemoved(chatId) {
     state.chats = state.chats.filter((c) => c.chatId !== chatId);
     renderChatList();
+    if (watchSession && watchSession.chatId === chatId) {
+      // Групу видалили/мене з неї прибрали, поки я саме дивився в ній відео — просто прибираємо
+      // локальний стан перегляду без нового emit: сервер уже сам вивів мене з учасників
+      watchSession = null;
+      resetWatchUI();
+    }
+    if (groupWatchBannerChatId === chatId) hideGroupWatchBanner();
     if (state.activeChatId === chatId) {
       state.activeChatId = null;
       state.activeChatWith = null;
@@ -3319,19 +3369,24 @@
   const watchVideoFile = el('watchVideoFile');
   const watchYtControls = el('watchYtControls');
   const watchInteractionOverlay = el('watchInteractionOverlay');
+  const groupWatchBanner = el('groupWatchBanner');
+  const groupWatchBannerText = el('groupWatchBannerText');
+  const groupWatchJoinBtn = el('groupWatchJoinBtn');
   const watchYtPlayBtn = el('watchYtPlayBtn');
   const watchYtSeek = el('watchYtSeek');
   const watchYtTime = el('watchYtTime');
   const watchYtVolume = el('watchYtVolume');
   const watchFullscreenBtn = el('watchFullscreenBtn');
 
-  let watchSession = null; // { chatId, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
+  let watchSession = null; // { chatId, isGroup, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
   let pendingWatchInvite = null; // { chatId, source } — я запросив і чекаю відповіді
   let incomingWatchInvite = null; // { chatId, source, fromUserId, fromUsername } — мене запросили
   let isSwitchingVideo = false; // я вже дивлюсь разом і зараз обираю ІНШЕ відео (без повторного запрошення)
   let switchingChatId = null;
+  let switchingIsGroup = false;
   let isPartnerChoosing = false; // співрозмовник зараз обирає нове відео — я лише чекаю, не виходячи з режиму
   let partnerChoosingChatId = null;
+  let groupWatchBannerChatId = null; // групу, для якої зараз показаний банер "N дивляться разом"
   let youtubeApiPromise = null;
 
   function parseYoutubeVideoId(input) {
@@ -3369,7 +3424,7 @@
   }
 
   function openWatchArea() {
-    if (state.activeChatIsGroup || !state.activeChatId) return;
+    if (!state.activeChatId) return;
     activeChatEl.classList.add('watch-mode');
     appScreen.classList.add('watch-active');
     watchVideoArea.classList.remove('hidden');
@@ -3411,7 +3466,8 @@
     watchChangeBtn.classList.remove('hidden');
   }
 
-  async function beginYoutubeSession(videoId, chatId) {
+  async function beginYoutubeSession(videoId, chatId, opts) {
+    const { isGroup = false, initialState = null } = opts || {};
     openWatchArea();
     showPlayer();
     watchVideoFile.classList.add('hidden');
@@ -3426,6 +3482,7 @@
 
     watchSession = {
       chatId,
+      isGroup,
       type: 'youtube',
       ytPlayer: null,
       applyingRemote: false,
@@ -3445,6 +3502,24 @@
           watchYtSeek.max = String(ytPlayer.getDuration() || 100);
           // Гучність — суто локальна для мене, не синхронізується із співрозмовником
           ytPlayer.setVolume(Number(watchYtVolume.value));
+
+          if (initialState) {
+            // Пізнє приєднання до вже активного групового перегляду — одразу синхронізуємось
+            // на поточну позицію замість старту з нуля, з тією ж компенсацією затримки мережі
+            watchSession.applyingRemote = true;
+            const latency = initialState.action === 'play' ? Math.max(0, (Date.now() - initialState.ts) / 1000) : 0;
+            const targetTime = initialState.time + latency;
+            ytPlayer.seekTo(targetTime, true);
+            if (initialState.action === 'play') {
+              ytPlayer.playVideo();
+              watchYtPlayBtn.textContent = '⏸';
+            } else {
+              ytPlayer.pauseVideo();
+              watchYtPlayBtn.textContent = '▶';
+            }
+            setTimeout(() => { if (watchSession) watchSession.applyingRemote = false; }, 1800);
+            return;
+          }
 
           // "Прогріваємо" плеєр одразу після завантаження: коротко й беззвучно програємо кадр,
           // щоб YouTube почав завантажувати буфер заздалегідь, а не лише в момент першого
@@ -3501,27 +3576,50 @@
     }, 500);
   }
 
-  function beginFileSession(url, chatId) {
+  function beginFileSession(url, chatId, opts) {
+    const { isGroup = false, initialState = null } = opts || {};
     openWatchArea();
     showPlayer();
     watchYoutubeMount.classList.add('hidden');
     watchVideoFile.classList.remove('hidden');
     watchYtControls.classList.remove('hidden'); // та сама панель керування, що й для YouTube — тепер працює для обох
 
-    watchSession = { chatId, type: 'file', applyingRemote: false };
+    watchSession = { chatId, isGroup, type: 'file', applyingRemote: false };
     watchVideoFile.preload = 'auto'; // просимо браузер почати буферизацію одразу, ще до першого натискання плей
     watchVideoFile.src = url;
     watchVideoFile.load();
     watchVideoFile.volume = Number(watchYtVolume.value) / 100;
-    watchYtPlayBtn.textContent = '▶';
     watchYtSeek.value = '0';
     watchYtTime.textContent = '0:00 / 0:00';
     showWatchControls();
+
+    if (initialState) {
+      // Пізнє приєднання до вже активного групового перегляду — синхронізуємось на поточну
+      // позицію, щойно стануть відомі метадані відео (currentTime до цього момента могло
+      // просто ігноруватись браузером)
+      watchSession.applyingRemote = true;
+      watchVideoFile.addEventListener('loadedmetadata', () => {
+        if (!watchSession) return;
+        const latency = initialState.action === 'play' ? Math.max(0, (Date.now() - initialState.ts) / 1000) : 0;
+        watchVideoFile.currentTime = initialState.time + latency;
+        if (initialState.action === 'play') {
+          watchVideoFile.play().catch(() => {});
+          watchYtPlayBtn.textContent = '⏸';
+        } else {
+          watchVideoFile.pause();
+          watchYtPlayBtn.textContent = '▶';
+        }
+      }, { once: true });
+      setTimeout(() => { if (watchSession) watchSession.applyingRemote = false; }, 1800);
+    } else {
+      watchYtPlayBtn.textContent = '▶';
+    }
   }
 
   function emitWatchState(action, time) {
     if (!watchSession) return;
-    state.socket.emit('watch:state', { chatId: watchSession.chatId, action, time });
+    const eventName = watchSession.isGroup ? 'group-watch:state' : 'watch:state';
+    state.socket.emit(eventName, { chatId: watchSession.chatId, action, time });
   }
 
   function stopCurrentPlayer() {
@@ -3577,14 +3675,15 @@
     watchVideoArea.classList.add('hidden');
     showSourcePicker();
     watchYoutubeInput.value = '';
+    updateGroupWatchParticipantCount(0);
   }
 
   function closeWatchSession(announce) {
     if (watchSession && announce) {
       state.socket.emit('watch:end', { chatId: watchSession.chatId });
     }
+    resetWatchUI(); // виклик, поки watchSession ще не обнулено — stopCurrentPlayer() всередині коректно прибере таймер/плеєр
     watchSession = null;
-    resetWatchUI();
   }
 
   function cancelPendingInvite() {
@@ -3594,9 +3693,87 @@
     resetWatchUI();
   }
 
+  // Групова "кімната" перегляду — вихід лише мене одного, перегляд триває для решти учасників
+  function leaveGroupWatch() {
+    if (!watchSession || !watchSession.isGroup) return;
+    state.socket.emit('group-watch:leave', { chatId: watchSession.chatId });
+    resetWatchUI();
+    watchSession = null;
+  }
+
+  function startGroupWatch(source) {
+    state.socket.emit('group-watch:start', { chatId: state.activeChatId, source }, (ack) => {
+      if (!ack || ack.error) {
+        watchSourceStatus.textContent = (ack && ack.error) || 'Не вдалося почати перегляд';
+        watchSourceStatus.classList.remove('hidden');
+        return;
+      }
+      const chatId = state.activeChatId;
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, { isGroup: true });
+      else if (source.type === 'file') beginFileSession(source.url, chatId, { isGroup: true });
+      updateGroupWatchParticipantCount(1);
+    });
+  }
+
+  function joinGroupWatch(chatId) {
+    state.socket.emit('group-watch:join', { chatId }, (ack) => {
+      if (!ack || ack.error) {
+        alert((ack && ack.error) || 'Не вдалося приєднатися до перегляду');
+        return;
+      }
+      hideGroupWatchBanner();
+      if (ack.source.type === 'youtube') {
+        beginYoutubeSession(ack.source.videoId, chatId, { isGroup: true, initialState: ack.lastState });
+      } else if (ack.source.type === 'file') {
+        beginFileSession(ack.source.url, chatId, { isGroup: true, initialState: ack.lastState });
+      }
+      updateGroupWatchParticipantCount(ack.participantCount);
+    });
+  }
+
+  function showGroupWatchBanner(chatId, participantCount) {
+    if (state.activeChatId !== chatId) return; // не той чат зараз відкритий — банер там не потрібен
+    if (watchSession && watchSession.chatId === chatId) return; // я вже сам дивлюсь — банер зайвий
+    groupWatchBannerChatId = chatId;
+    groupWatchBannerText.textContent = `🎬 ${pluralizeMembers(participantCount)} дивляться відео разом`;
+    groupWatchBanner.classList.remove('hidden');
+  }
+
+  function hideGroupWatchBanner() {
+    groupWatchBannerChatId = null;
+    groupWatchBanner.classList.add('hidden');
+  }
+
+  function updateGroupWatchParticipantCount(count) {
+    const el2 = el('watchGroupParticipantCount');
+    if (watchSession && watchSession.isGroup && count) {
+      el2.textContent = ` · ${pluralizeMembers(count)}`;
+      el2.classList.remove('hidden');
+    } else {
+      el2.classList.add('hidden');
+    }
+  }
+
+  groupWatchJoinBtn.addEventListener('click', () => {
+    if (!groupWatchBannerChatId) return;
+    joinGroupWatch(groupWatchBannerChatId);
+  });
+
   // Кнопка "поставити інше відео" — завершує поточний перегляд (як і хрестик), але замість
   // повного закриття одразу показує вибір нового джерела, не виходячи з режиму перегляду
   function changeVideo() {
+    if (watchSession && watchSession.isGroup) {
+      // У групі простіше: одразу переходимо до вибору нового джерела й транслюємо зміну
+      // поточним учасникам напряму, без "очікування" — приєднатись раніше вже і так було
+      // добровільним рішенням кожного
+      switchingChatId = watchSession.chatId;
+      switchingIsGroup = true;
+      resetWatchUI();
+      watchSession = null;
+      isSwitchingVideo = true;
+      showSourcePicker();
+      return;
+    }
     if (!watchSession && !pendingWatchInvite) return;
     if (!confirm('Поставити інше відео? Поточний перегляд завершиться для обох.')) return;
     if (pendingWatchInvite) {
@@ -3610,6 +3787,7 @@
       // Повідомляємо співрозмовника "я обираю нове відео", щоб він НЕ вийшов з режиму перегляду,
       // а лишень зачекав; новий вибір надішлемо напряму (watch:switch-video), без нового прийняття
       switchingChatId = watchSession.chatId;
+      switchingIsGroup = false;
       state.socket.emit('watch:switching', { chatId: switchingChatId });
       stopCurrentPlayer();
       watchSession = null;
@@ -3626,6 +3804,10 @@
   });
 
   watchCloseBtn.addEventListener('click', () => {
+    if (watchSession && watchSession.isGroup) {
+      leaveGroupWatch();
+      return;
+    }
     // Якщо вже щось запущено, ще чекаємо відповіді, або зараз триває заміна (в будь-яку сторону) —
     // перепитуємо, бо перегляд зупиниться в обох. Якщо ж людина ще на початковому екрані вибору —
     // питати нема сенсу
@@ -3637,10 +3819,12 @@
       cancelPendingInvite();
     } else if (isSwitchingVideo) {
       // Розпочали обирати заміну (співрозмовник уже чекає з повідомленням "обирає відео…"),
-      // але передумали — обов'язково повідомляємо watch:end, інакше він так і лишиться чекати
-      state.socket.emit('watch:end', { chatId: switchingChatId });
+      // але передумали — обов'язково повідомляємо watch:end, інакше він так і лишиться чекати.
+      // У груповому режимі це не потрібно — там ніхто нікого не чекає
+      if (!switchingIsGroup) state.socket.emit('watch:end', { chatId: switchingChatId });
       isSwitchingVideo = false;
       switchingChatId = null;
+      switchingIsGroup = false;
       resetWatchUI();
     } else if (isPartnerChoosing) {
       // Ми пасивно чекаємо, поки співрозмовник обирає заміну, але самі вирішили вийти —
@@ -3690,16 +3874,22 @@
     state.socket.emit('watch:invite', { chatId: state.activeChatId, source });
   }
 
-  // Спільна точка вибору джерела: якщо це заміна відео посеред уже узгодженого перегляду —
-  // одразу транслюємо напряму без нового запрошення; інакше — звичайний цикл запросити/прийняти
+  // Спільна точка вибору джерела: заміна відео (особиста чи групова) транслюється напряму;
+  // початок групового перегляду стартує одразу; початок особистого йде через запрошення/прийняття
   function chooseWatchSource(source) {
     if (isSwitchingVideo) {
       const chatId = switchingChatId;
+      const isGroup = switchingIsGroup;
       isSwitchingVideo = false;
       switchingChatId = null;
-      state.socket.emit('watch:switch-video', { chatId, source });
-      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId);
-      else if (source.type === 'file') beginFileSession(source.url, chatId);
+      switchingIsGroup = false;
+      state.socket.emit(isGroup ? 'group-watch:switch-video' : 'watch:switch-video', { chatId, source });
+      if (source.type === 'youtube') beginYoutubeSession(source.videoId, chatId, { isGroup });
+      else if (source.type === 'file') beginFileSession(source.url, chatId, { isGroup });
+      return;
+    }
+    if (state.activeChatIsGroup) {
+      startGroupWatch(source);
       return;
     }
     sendWatchInvite(source);

@@ -3424,6 +3424,7 @@
   const watchYtTime = el('watchYtTime');
   const watchYtVolume = el('watchYtVolume');
   const watchFullscreenBtn = el('watchFullscreenBtn');
+  const watchCcBtn = el('watchCcBtn');
 
   let watchSession = null; // { chatId, isGroup, type: 'youtube'|'file', ytPlayer, applyingRemote, pollTimer, seekDragging }
   let pendingWatchInvite = null; // { chatId, source } — я запросив і чекаю відповіді
@@ -3522,6 +3523,7 @@
     watchVideoFile.classList.add('hidden');
     watchYoutubeMount.classList.remove('hidden');
     watchYtControls.classList.remove('hidden');
+    watchCcBtn.classList.remove('hidden'); // субтитри доступні лише для YouTube
     watchYtPlayBtn.textContent = '▶';
     watchYtSeek.value = '0';
     watchYtTime.textContent = '0:00 / 0:00';
@@ -3551,6 +3553,7 @@
           watchYtSeek.max = String(ytPlayer.getDuration() || 100);
           // Гучність — суто локальна для мене, не синхронізується із співрозмовником
           ytPlayer.setVolume(Number(watchYtVolume.value));
+          applyCaptionsState(); // те саме для субтитрів — застосовуємо збережений локальний вибір
 
           if (initialState) {
             // Пізнє приєднання до вже активного групового перегляду — одразу синхронізуємось
@@ -3632,6 +3635,7 @@
     watchYoutubeMount.classList.add('hidden');
     watchVideoFile.classList.remove('hidden');
     watchYtControls.classList.remove('hidden'); // та сама панель керування, що й для YouTube — тепер працює для обох
+    watchCcBtn.classList.add('hidden'); // субтитрів для власного файлу немає
 
     watchSession = { chatId, isGroup, type: 'file', applyingRemote: false };
     watchVideoFile.preload = 'auto'; // просимо браузер почати буферизацію одразу, ще до першого натискання плей
@@ -4064,6 +4068,30 @@
       watchYtVolume.value = String(watchVolumeBeforeMute || 100);
     }
     applyWatchVolume(watchYtVolume.value);
+  });
+
+  // Субтитри YouTube — так само суто локально для мене, у кожного свій вибір, не синхронізується.
+  // Працює лише для YouTube (кнопка ховається для власних файлів — субтитрів там немає)
+  let watchCcEnabled = localStorage.getItem('watchCcEnabled') === 'true';
+
+  function applyCaptionsState() {
+    if (!watchSession || watchSession.type !== 'youtube' || !watchSession.ytPlayer) return;
+    try {
+      if (watchCcEnabled) {
+        watchSession.ytPlayer.loadModule('captions');
+        watchSession.ytPlayer.setOption('captions', 'track', {});
+      } else {
+        watchSession.ytPlayer.unloadModule('captions');
+      }
+    } catch (e) { /* ignore — деякі відео просто не мають субтитрів */ }
+    watchCcBtn.classList.toggle('active', watchCcEnabled);
+  }
+
+  watchCcBtn.addEventListener('click', () => {
+    if (!watchSession || watchSession.type !== 'youtube') return;
+    watchCcEnabled = !watchCcEnabled;
+    localStorage.setItem('watchCcEnabled', String(watchCcEnabled));
+    applyCaptionsState();
   });
 
   watchVideoFile.addEventListener('loadedmetadata', () => {

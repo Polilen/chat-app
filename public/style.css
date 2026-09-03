@@ -547,6 +547,8 @@ body {
   justify-content: center;
 }
 .watch-yt-fullscreen-btn:hover { background: rgba(255,255,255,0.22); }
+#watchCcBtn { font-size: 10px; font-weight: 700; }
+#watchCcBtn.active { background: var(--accent); color: #fff; }
 
 @media (max-width: 720px) {
   .active-chat.watch-mode {

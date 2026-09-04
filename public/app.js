@@ -2266,6 +2266,7 @@
   const avatarInput = el('avatarInput');
   const changeAvatarBtn = el('changeAvatarBtn');
   const removeAvatarBtn = el('removeAvatarBtn');
+  const installAppSettingsBtn = el('installAppSettingsBtn');
   const showLastSeenToggle = el('showLastSeenToggle');
 
   function renderAvatarHistoryGrid(gridEl, sectionEl, history) {
@@ -2318,11 +2319,27 @@
     renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
     showLastSeenToggle.checked = state.user.showLastSeen !== false;
     settingsHistorySection.classList.add('hidden');
+    // Кнопку встановлення показуємо лише якщо застосунок ще не встановлено
+    // (window.chatAppInstall приходить з install-prompt.js)
+    const alreadyInstalled = window.chatAppInstall && window.chatAppInstall.isStandalone();
+    installAppSettingsBtn.classList.toggle('hidden', !!alreadyInstalled);
     settingsModal.classList.remove('hidden');
     api('/api/me').then(({ user }) => {
       renderAvatarHistoryGrid(settingsHistoryGrid, settingsHistorySection, user.avatarHistory);
     }).catch(() => {});
   }
+
+  installAppSettingsBtn.addEventListener('click', () => {
+    if (!window.chatAppInstall) return;
+    const shown = window.chatAppInstall.promptInstall();
+    if (!shown) {
+      if (window.chatAppInstall.isIOS()) {
+        showSettingsStatus('Щоб встановити: тисни «Поділитися» ⬆︎ внизу Safari → «На екран Домой»');
+      } else {
+        showSettingsStatus('Встановлення недоступне у цьому браузері — спробуй Chrome на Android');
+      }
+    }
+  });
 
   // ---------- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) ----------
 

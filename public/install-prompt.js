@@ -1,10 +1,8 @@
-// Кастомний банер "Встановити застосунок" внизу екрана.
-// Не чіпає app.js — підключається окремим файлом.
+// Кастомний банер "Встановити застосунок" внизу екрана + спільний стан
+// для кнопки в налаштуваннях профілю (app.js читає window.chatAppInstall).
+// Не чіпає app.js напряму — підключається окремим файлом.
 
 (function () {
-  var DISMISS_KEY = 'installBannerDismissedAt';
-  var DISMISS_DAYS = 7; // якщо закрили — не показувати повторно N днів
-
   function isStandalone() {
     return (
       window.matchMedia('(display-mode: standalone)').matches ||
@@ -12,21 +10,33 @@
     );
   }
 
-  function isDismissedRecently() {
-    var ts = localStorage.getItem(DISMISS_KEY);
-    if (!ts) return false;
-    var days = (Date.now() - Number(ts)) / (1000 * 60 * 60 * 24);
-    return days < DISMISS_DAYS;
-  }
-
   function isIOS() {
     return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
   }
 
-  if (isStandalone() || isDismissedRecently()) return;
-
   var deferredPrompt = null;
   var banner = null;
+
+  // Публічний інтерфейс для app.js (кнопка "Завантажити застосунок" у налаштуваннях)
+  window.chatAppInstall = {
+    isStandalone: isStandalone,
+    isIOS: isIOS,
+    // Повертає true, якщо вдалось показати нативний діалог встановлення (Android/Chrome).
+    // Якщо системного діалогу немає (iOS, десктоп без підтримки) — повертає false,
+    // виклик коду сам вирішує, що показати користувачу (інструкцію тощо).
+    promptInstall: function () {
+      if (!deferredPrompt) return false;
+      var p = deferredPrompt;
+      deferredPrompt = null;
+      p.prompt();
+      p.userChoice.finally(function () {
+        if (banner) banner.remove();
+      });
+      return true;
+    },
+  };
+
+  if (isStandalone()) return; // вже встановлено — банер на головній не потрібен
 
   function buildBanner(mode) {
     var el = document.createElement('div');
@@ -39,7 +49,7 @@
       textHtml =
         '<div class="install-text">' +
         '<div class="install-title">Встановити як застосунок</div>' +
-        '<div class="install-sub">Поділитися ' + shareGlyph() + ' → «На екран Домой»</div>' +
+        '<div class="install-sub">Поділитися ⬆︎ → «На екран Домой»</div>' +
         '</div>';
       actionHtml = '';
     } else {
@@ -61,14 +71,10 @@
     return el;
   }
 
-  function shareGlyph() {
-    // невеличка іконка "поділитися" текстом, без залежності від емодзі-набору
-    return '⬆︎';
-  }
-
   function dismiss() {
+    // Навмисно нічого не запам'ятовуємо — банер має пропонувати встановлення
+    // на головній щоразу, коли сайт відкривають не в встановленому режимі.
     if (banner) banner.remove();
-    localStorage.setItem(DISMISS_KEY, String(Date.now()));
   }
 
   function showBanner(mode) {
@@ -79,12 +85,7 @@
 
     if (mode !== 'ios') {
       document.getElementById('installBannerBtn').addEventListener('click', function () {
-        if (!deferredPrompt) return;
-        deferredPrompt.prompt();
-        deferredPrompt.userChoice.finally(function () {
-          deferredPrompt = null;
-          dismiss();
-        });
+        window.chatAppInstall.promptInstall();
       });
     }
   }
@@ -100,5 +101,7 @@
     });
   }
 
-  window.addEventListener('appinstalled', dismiss);
+  window.addEventListener('appinstalled', function () {
+    if (banner) banner.remove();
+  });
 })();

@@ -3957,15 +3957,42 @@
 
   // Повноекранний режим спільного перегляду — суто локальний для мене, не впливає на співрозмовника
   // (Fullscreen API браузера завжди діє лише в межах власної вкладки/пристрою кожного)
+  //
+  // На телефоні контейнер у fullscreen лишається портретним (вузьким і високим), і YouTube у
+  // такому неприродно витягнутому вікні підставляє власний UI (рекламну картку, блок субтитрів)
+  // замість відео. Тому додатково примусово повертаємо екран у альбомну орієнтацію —
+  // Screen Orientation API підтримується не всюди (немає в Safari/iOS), тому обгорнуто в try/catch
+  // і просто мовчки ігнорується там, де недоступне.
+  function lockWatchLandscape() {
+    try {
+      if (screen.orientation && screen.orientation.lock) {
+        screen.orientation.lock('landscape').catch(() => {});
+      }
+    } catch (e) { /* API недоступне на цьому пристрої/браузері — просто ігноруємо */ }
+  }
+
+  function unlockWatchOrientation() {
+    try {
+      if (screen.orientation && screen.orientation.unlock) {
+        screen.orientation.unlock();
+      }
+    } catch (e) { /* те саме */ }
+  }
+
   watchFullscreenBtn.addEventListener('click', () => {
     if (document.fullscreenElement === watchPlayerWrap) {
       document.exitFullscreen().catch(() => {});
     } else {
-      watchPlayerWrap.requestFullscreen().catch(() => {});
+      watchPlayerWrap.requestFullscreen()
+        .then(lockWatchLandscape)
+        .catch(() => {});
     }
   });
   document.addEventListener('fullscreenchange', () => {
     watchFullscreenBtn.textContent = document.fullscreenElement === watchPlayerWrap ? '⤢' : '⛶';
+    if (document.fullscreenElement !== watchPlayerWrap) {
+      unlockWatchOrientation();
+    }
   });
 
   // ---------- Модалка вхідного запрошення на спільний перегляд ----------

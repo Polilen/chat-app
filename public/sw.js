@@ -12,6 +12,8 @@ const SHELL_FILES = [
   '/manifest.json',
   '/icons/icon-192.png',
   '/icons/icon-512.png',
+  '/install-prompt.css',
+  '/install-prompt.js',
 ];
 
 self.addEventListener('install', (event) => {

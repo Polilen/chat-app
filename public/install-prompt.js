@@ -1,5 +1,7 @@
-// Кастомний банер "Встановити застосунок" внизу екрана + спільний стан
-// для кнопки в налаштуваннях профілю (app.js читає window.chatAppInstall).
+// Кастомний банер "Встановити застосунок" — показується лише поки видно
+// #authScreen (тобто до входу в акаунт). Після логіну банер ховається,
+// а встановити застосунок можна через кнопку в налаштуваннях профілю
+// (app.js читає window.chatAppInstall.promptInstall()).
 // Не чіпає app.js напряму — підключається окремим файлом.
 
 (function () {
@@ -16,6 +18,7 @@
 
   var deferredPrompt = null;
   var banner = null;
+  var pendingMode = null; // 'ios' | 'android' — що показати, коли настане час
 
   // Публічний інтерфейс для app.js (кнопка "Завантажити застосунок" у налаштуваннях)
   window.chatAppInstall = {
@@ -30,13 +33,19 @@
       deferredPrompt = null;
       p.prompt();
       p.userChoice.finally(function () {
-        if (banner) banner.remove();
+        removeBanner();
       });
       return true;
     },
   };
 
-  if (isStandalone()) return; // вже встановлено — банер на головній не потрібен
+  if (isStandalone()) return; // вже встановлено — банер узагалі не потрібен
+
+  var authScreenEl = document.getElementById('authScreen');
+
+  function isAuthScreenVisible() {
+    return !!authScreenEl && !authScreenEl.classList.contains('hidden');
+  }
 
   function buildBanner(mode) {
     var el = document.createElement('div');
@@ -71,19 +80,24 @@
     return el;
   }
 
-  function dismiss() {
-    // Навмисно нічого не запам'ятовуємо — банер має пропонувати встановлення
-    // на головній щоразу, коли сайт відкривають не в встановленому режимі.
-    if (banner) banner.remove();
+  function removeBanner() {
+    if (banner) {
+      banner.remove();
+      banner = null;
+    }
   }
 
-  function showBanner(mode) {
-    if (banner) return;
-    banner = buildBanner(mode);
+  function renderBannerIfNeeded() {
+    if (!isAuthScreenVisible() || !pendingMode) {
+      removeBanner();
+      return;
+    }
+    if (banner) return; // вже показано
 
-    document.getElementById('installBannerClose').addEventListener('click', dismiss);
+    banner = buildBanner(pendingMode);
+    document.getElementById('installBannerClose').addEventListener('click', removeBanner);
 
-    if (mode !== 'ios') {
+    if (pendingMode !== 'ios') {
       document.getElementById('installBannerBtn').addEventListener('click', function () {
         window.chatAppInstall.promptInstall();
       });
@@ -91,17 +105,23 @@
   }
 
   if (isIOS()) {
-    // На iOS немає beforeinstallprompt — показуємо інструкцію одразу
-    showBanner('ios');
+    // На iOS немає beforeinstallprompt — інструкція готова одразу
+    pendingMode = 'ios';
+    renderBannerIfNeeded();
   } else {
     window.addEventListener('beforeinstallprompt', function (e) {
       e.preventDefault();
       deferredPrompt = e;
-      showBanner('android');
+      pendingMode = 'android';
+      renderBannerIfNeeded();
     });
   }
 
-  window.addEventListener('appinstalled', function () {
-    if (banner) banner.remove();
-  });
+  // Стежимо за переходами екран-входу ↔ екран-застосунку (SPA, без перезавантаження сторінки)
+  if (authScreenEl) {
+    var observer = new MutationObserver(renderBannerIfNeeded);
+    observer.observe(authScreenEl, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  window.addEventListener('appinstalled', removeBanner);
 })();

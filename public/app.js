@@ -1,4 +1,8 @@
 (function () {
+  // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
+  // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
+  const APP_VERSION = '1.2.0';
+
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
   function setAppHeight() {
@@ -2262,6 +2266,7 @@
   const settingsModal = el('settingsModal');
   const settingsAvatar = el('settingsAvatar');
   const settingsUsername = el('settingsUsername');
+  const settingsAppVersion = el('settingsAppVersion');
   const settingsStatus = el('settingsStatus');
   const avatarInput = el('avatarInput');
   const changeAvatarBtn = el('changeAvatarBtn');
@@ -2316,24 +2321,25 @@
   function openSettingsModal() {
     settingsStatus.classList.add('hidden');
     settingsUsername.textContent = state.user.username;
+    settingsAppVersion.textContent = `Версія застосунку: ${APP_VERSION}`;
     renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
     showLastSeenToggle.checked = state.user.showLastSeen !== false;
     settingsHistorySection.classList.add('hidden');
-    // Кнопку встановлення показуємо лише якщо застосунок ще не встановлено
-    // (window.chatAppInstall приходить з install-prompt.js)
-    const alreadyInstalled = window.chatAppInstall && window.chatAppInstall.isStandalone();
-    installAppSettingsBtn.classList.toggle('hidden', !!alreadyInstalled);
     settingsModal.classList.remove('hidden');
     api('/api/me').then(({ user }) => {
       renderAvatarHistoryGrid(settingsHistoryGrid, settingsHistorySection, user.avatarHistory);
     }).catch(() => {});
   }
 
+  // Кнопка "Завантажити застосунок" — постійна, завжди видима в налаштуваннях
   installAppSettingsBtn.addEventListener('click', () => {
-    if (!window.chatAppInstall) return;
-    const shown = window.chatAppInstall.promptInstall();
+    if (window.chatAppInstall && window.chatAppInstall.isStandalone()) {
+      showSettingsStatus('Застосунок вже встановлено на цьому пристрої');
+      return;
+    }
+    const shown = window.chatAppInstall && window.chatAppInstall.promptInstall();
     if (!shown) {
-      if (window.chatAppInstall.isIOS()) {
+      if (window.chatAppInstall && window.chatAppInstall.isIOS()) {
         showSettingsStatus('Щоб встановити: тисни «Поділитися» ⬆︎ внизу Safari → «На екран Домой»');
       } else {
         showSettingsStatus('Встановлення недоступне у цьому браузері — спробуй Chrome на Android');
@@ -3068,9 +3074,31 @@
 
   // ---------- Дзвінки (WebRTC, лише в особистих чатах) ----------
 
+  // STUN сам по собі не завжди спрацьовує (мобільний інтернет, деякі Wi-Fi/корпоративні
+  // мережі з "симетричним" NAT) — тоді браузери не можуть з'єднатись напряму, і дзвінок
+  // "з'єднується", але звуку немає. TURN-сервер ретранслює медіа через себе як запасний варіант.
+  // Це безкоштовний спільний TURN (Open Relay Project / Metered) — ліміт 20 ГБ/міс на всіх
+  // користувачів цього публічного сервера, тому за пікових навантажень він може бути повільним
+  // або тимчасово недоступним. Якщо звук усе одно почне пропадати — варто завести власний
+  // безкоштовний акаунт на metered.ca (свої TURN-креденшели, без спільного ліміту).
   const ICE_SERVERS = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
+    {
+      urls: 'turn:openrelay.metered.ca:80',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
+    {
+      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+      username: 'openrelayproject',
+      credential: 'openrelayproject',
+    },
   ];
 
   const callModal = el('callModal');

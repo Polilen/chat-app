@@ -1,7 +1,7 @@
 (function () {
   // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
   // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
-  const APP_VERSION = '1.2.0';
+  const APP_VERSION = '1.2.1';
 
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
@@ -3077,27 +3077,30 @@
   // STUN сам по собі не завжди спрацьовує (мобільний інтернет, деякі Wi-Fi/корпоративні
   // мережі з "симетричним" NAT) — тоді браузери не можуть з'єднатись напряму, і дзвінок
   // "з'єднується", але звуку немає. TURN-сервер ретранслює медіа через себе як запасний варіант.
-  // Це безкоштовний спільний TURN (Open Relay Project / Metered) — ліміт 20 ГБ/міс на всіх
-  // користувачів цього публічного сервера, тому за пікових навантажень він може бути повільним
-  // або тимчасово недоступним. Якщо звук усе одно почне пропадати — варто завести власний
-  // безкоштовний акаунт на metered.ca (свої TURN-креденшели, без спільного ліміту).
+  // Це особистий безкоштовний TURN-акаунт на metered.ca (проєкт "rechi-chat", 20 ГБ/міс) —
+  // без спільного ліміту з іншими користувачами інтернету, на відміну від публічного Open Relay.
   const ICE_SERVERS = [
+    { urls: 'stun:stun.relay.metered.ca:80' },
     { urls: 'stun:stun.l.google.com:19302' },
-    { urls: 'stun:stun1.l.google.com:19302' },
     {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
+      urls: 'turn:standard.relay.metered.ca:80',
+      username: 'a01a530a2e89f42f29fa6a9e',
+      credential: 'Js+uW/qk859VTOhz',
     },
     {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
+      urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
+      username: 'a01a530a2e89f42f29fa6a9e',
+      credential: 'Js+uW/qk859VTOhz',
     },
     {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject',
+      urls: 'turn:standard.relay.metered.ca:443',
+      username: 'a01a530a2e89f42f29fa6a9e',
+      credential: 'Js+uW/qk859VTOhz',
+    },
+    {
+      urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
+      username: 'a01a530a2e89f42f29fa6a9e',
+      credential: 'Js+uW/qk859VTOhz',
     },
   ];
 

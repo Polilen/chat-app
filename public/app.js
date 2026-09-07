@@ -1,7 +1,7 @@
 (function () {
   // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
   // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
-  const APP_VERSION = '1.2.1';
+  const APP_VERSION = '1.2.2';
 
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
@@ -3175,8 +3175,19 @@
       if (!currentCall.remoteMicStreamId || streamId === currentCall.remoteMicStreamId) {
         if (!currentCall.remoteMicStreamId) currentCall.remoteMicStreamId = streamId;
         remoteCallAudio.srcObject = e.streams[0];
+        // Атрибут autoplay сам по собі браузер іноді тихо блокує (звук з'являється лише
+        // після якоїсь іншої випадкової дії на сторінці) — тому явно просимо відтворити
+        // й у разі відмови пробуємо ще раз при першому кліку користувача по сторінці.
+        remoteCallAudio.play().catch(() => {
+          const retry = () => { remoteCallAudio.play().catch(() => {}); };
+          document.addEventListener('click', retry, { once: true });
+        });
       } else {
         remoteScreenAudio.srcObject = e.streams[0];
+        remoteScreenAudio.play().catch(() => {
+          const retry = () => { remoteScreenAudio.play().catch(() => {}); };
+          document.addEventListener('click', retry, { once: true });
+        });
         e.track.onended = () => { remoteScreenAudio.srcObject = null; };
       }
     };
@@ -3434,10 +3445,14 @@
 
   callBtn.addEventListener('click', () => {
     if (state.activeChatIsGroup || !state.activeChatWith) return;
+    remoteCallAudio.play().catch(() => {}); // "прогріваємо" автовідтворення саме в момент кліку
     startCall(state.activeChatWith);
   });
   callDeclineBtn.addEventListener('click', declineCall);
-  callAcceptBtn.addEventListener('click', acceptCall);
+  callAcceptBtn.addEventListener('click', () => {
+    remoteCallAudio.play().catch(() => {}); // те саме для того, хто відповідає на дзвінок
+    acceptCall();
+  });
   callEndBtn.addEventListener('click', endCall);
   callMuteBtn.addEventListener('click', toggleCallMute);
   callScreenShareBtn.addEventListener('click', () => {

@@ -1,7 +1,7 @@
 (function () {
   // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
   // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
-  const APP_VERSION = '1.3.0-no-turn';
+  const APP_VERSION = '1.3.1-no-turn';
 
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
@@ -2333,7 +2333,7 @@
   function openSettingsModal() {
     settingsStatus.classList.add('hidden');
     settingsUsername.textContent = state.user.username;
-    settingsAppVersion.textContent = `Версія застосунку: ${APP_VERSION}`;
+    if (settingsAppVersion) settingsAppVersion.textContent = `Версія застосунку: ${APP_VERSION}`;
     renderAvatarInto(settingsAvatar, state.user.username, state.user.avatarUrl);
     showLastSeenToggle.checked = state.user.showLastSeen !== false;
     settingsHistorySection.classList.add('hidden');
@@ -2344,20 +2344,22 @@
   }
 
   // Кнопка "Завантажити застосунок" — постійна, завжди видима в налаштуваннях
-  installAppSettingsBtn.addEventListener('click', () => {
-    if (window.chatAppInstall && window.chatAppInstall.isStandalone()) {
-      showSettingsStatus('Застосунок вже встановлено на цьому пристрої');
-      return;
-    }
-    const shown = window.chatAppInstall && window.chatAppInstall.promptInstall();
-    if (!shown) {
-      if (window.chatAppInstall && window.chatAppInstall.isIOS()) {
-        showSettingsStatus('Щоб встановити: тисни «Поділитися» ⬆︎ внизу Safari → «На екран Домой»');
-      } else {
-        showSettingsStatus('Встановлення недоступне у цьому браузері — спробуй Chrome на Android');
+  if (installAppSettingsBtn) {
+    installAppSettingsBtn.addEventListener('click', () => {
+      if (window.chatAppInstall && window.chatAppInstall.isStandalone()) {
+        showSettingsStatus('Застосунок вже встановлено на цьому пристрої');
+        return;
       }
-    }
-  });
+      const shown = window.chatAppInstall && window.chatAppInstall.promptInstall();
+      if (!shown) {
+        if (window.chatAppInstall && window.chatAppInstall.isIOS()) {
+          showSettingsStatus('Щоб встановити: тисни «Поділитися» ⬆︎ внизу Safari → «На екран Домой»');
+        } else {
+          showSettingsStatus('Встановлення недоступне у цьому браузері — спробуй Chrome на Android');
+        }
+      }
+    });
+  }
 
   // ---------- Профіль користувача (клік на аватарку/юзернейм у шапці особистого чату) ----------
 

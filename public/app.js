@@ -1,7 +1,7 @@
 (function () {
   // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
   // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
-  const APP_VERSION = '1.2.2';
+  const APP_VERSION = '1.3.0';
 
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
@@ -390,6 +390,7 @@
       clearTimeout(callRingTimeout);
       try {
         await currentCall.pc.setRemoteDescription(new RTCSessionDescription(answer));
+        await flushPendingRemoteCandidates();
         showCallUI('active');
         startCallTimer();
       } catch (err) {
@@ -397,7 +398,18 @@
       }
     });
     state.socket.on('call:ice-candidate', async ({ callId, candidate }) => {
-      if (!currentCall || currentCall.callId !== callId || !currentCall.pc) return;
+      if (!currentCall || currentCall.callId !== callId) return;
+      // Кандидат може прийти РАНІШЕ, ніж наш бік встиг створити peer connection
+      // (той, кому дзвонять, ще не натиснув "Прийняти") або встановити remoteDescription
+      // (відповідь ще в дорозі) — раніше такі кандидати просто губились, і саме через це
+      // дзвінок міг лишатись без звуку, доки випадково не спрацьовувала пересинхронізація
+      // (наприклад, при вмиканні демонстрації екрана).
+      const ready = currentCall.pc && currentCall.pc.remoteDescription && currentCall.pc.remoteDescription.type;
+      if (!ready) {
+        if (!currentCall.pendingRemoteCandidates) currentCall.pendingRemoteCandidates = [];
+        currentCall.pendingRemoteCandidates.push(candidate);
+        return;
+      }
       try {
         await currentCall.pc.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
@@ -3150,10 +3162,29 @@
     callFullscreenBtn.textContent = document.fullscreenElement === callVideoArea ? '⤢' : '⛶';
   });
 
+  async function flushPendingRemoteCandidates() {
+    if (!currentCall || !currentCall.pc || !currentCall.pendingRemoteCandidates) return;
+    const list = currentCall.pendingRemoteCandidates;
+    currentCall.pendingRemoteCandidates = [];
+    for (const candidate of list) {
+      try {
+        await currentCall.pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  }
+
   function setupPeerConnectionHandlers(pc) {
     pc.onicecandidate = (e) => {
-      if (e.candidate && currentCall && currentCall.callId) {
+      if (!e.candidate || !currentCall) return;
+      if (currentCall.callId) {
         state.socket.emit('call:ice-candidate', { callId: currentCall.callId, candidate: e.candidate });
+      } else {
+        // callId ще не відомий (чекаємо ack на call:offer) — кандидати часто встигають
+        // згенеруватись раніше за цю відповідь сервера, тому копичимо їх, а не губимо
+        if (!currentCall.pendingLocalCandidates) currentCall.pendingLocalCandidates = [];
+        currentCall.pendingLocalCandidates.push(e.candidate);
       }
     };
     pc.ontrack = (e) => {
@@ -3380,6 +3411,13 @@
           return;
         }
         currentCall.callId = ack.callId;
+        // Тепер callId відомий — відправляємо кандидати, що встигли накопичитись, поки чекали ack
+        if (currentCall.pendingLocalCandidates && currentCall.pendingLocalCandidates.length) {
+          currentCall.pendingLocalCandidates.forEach((candidate) => {
+            state.socket.emit('call:ice-candidate', { callId: currentCall.callId, candidate });
+          });
+          currentCall.pendingLocalCandidates = [];
+        }
         // Якщо за 40 секунд ніхто не відповів — самі завершуємо
         callRingTimeout = setTimeout(() => {
           if (currentCall && currentCall.callId === ack.callId) endCall();
@@ -3410,6 +3448,7 @@
 
     try {
       await pc.setRemoteDescription(new RTCSessionDescription(currentCall.pendingOffer));
+      await flushPendingRemoteCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       state.socket.emit('call:answer', { callId: currentCall.callId, answer });

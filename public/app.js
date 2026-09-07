@@ -1,7 +1,7 @@
 (function () {
   // Версія фронтенду — бампається вручну при кожній зміні public/*, щоб
   // у налаштуваннях профілю можна було перевірити, яка версія зараз задеплоєна.
-  const APP_VERSION = '1.3.0';
+  const APP_VERSION = '1.3.0-no-turn';
 
   // Реальна висота вікна на мобільних — 100vh там враховує адресний рядок і залишає
   // порожній простір знизу. Рахуємо фактичну висоту й підставляємо через CSS-змінну.
@@ -3091,29 +3091,16 @@
   // "з'єднується", але звуку немає. TURN-сервер ретранслює медіа через себе як запасний варіант.
   // Це особистий безкоштовний TURN-акаунт на metered.ca (проєкт "rechi-chat", 20 ГБ/міс) —
   // без спільного ліміту з іншими користувачами інтернету, на відміну від публічного Open Relay.
+  // Без TURN-сервера: лишились тільки STUN. Головний баг (звук пропадав через втрачені
+  // ранні ICE-кандидати) вже полагоджено вище — для більшості мереж (домашній Wi-Fi,
+  // звичайний мобільний інтернет) цього достатньо й без TURN. TURN був потрібен лише як
+  // запасний варіант для "жорсткого"/симетричного NAT (рідше зустрічається, але буває —
+  // деякі корпоративні мережі, окремі мобільні оператори). Якщо після цього звук усе одно
+  // іноді пропадатиме саме в такій ситуації — TURN можна повернути (Metered чи інший).
   const ICE_SERVERS = [
-    { urls: 'stun:stun.relay.metered.ca:80' },
     { urls: 'stun:stun.l.google.com:19302' },
-    {
-      urls: 'turn:standard.relay.metered.ca:80',
-      username: 'a01a530a2e89f42f29fa6a9e',
-      credential: 'Js+uW/qk859VTOhz',
-    },
-    {
-      urls: 'turn:standard.relay.metered.ca:80?transport=tcp',
-      username: 'a01a530a2e89f42f29fa6a9e',
-      credential: 'Js+uW/qk859VTOhz',
-    },
-    {
-      urls: 'turn:standard.relay.metered.ca:443',
-      username: 'a01a530a2e89f42f29fa6a9e',
-      credential: 'Js+uW/qk859VTOhz',
-    },
-    {
-      urls: 'turns:standard.relay.metered.ca:443?transport=tcp',
-      username: 'a01a530a2e89f42f29fa6a9e',
-      credential: 'Js+uW/qk859VTOhz',
-    },
+    { urls: 'stun:stun1.l.google.com:19302' },
+    { urls: 'stun:stun2.l.google.com:19302' },
   ];
 
   const callModal = el('callModal');
